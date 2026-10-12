@@ -1,6 +1,6 @@
-const { createMoney } = require('./money');
-const { PaymentStatus, canTransition } = require('./payment-status');
-const { InvalidPaymentTransitionError } = require('./errors');
+const { createMoney } = require('./Money');
+const { PaymentStatus, canTransition } = require('./PaymentStatus');
+const { InvalidPaymentTransitionError } = require('./DomainErrors');
 
 // Aggregate root. Status transitions only happen through its methods.
 class Payment {

@@ -2,7 +2,7 @@ const {
   DomainError,
   InvalidMoneyError,
   InvalidPaymentTransitionError,
-} = require('../../../core/domain/errors');
+} = require('../../../core/domain/DomainErrors');
 
 const STATUS_BY_ERROR = new Map([
   [InvalidMoneyError, 400],

@@ -1,8 +1,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { PaymentRepository } = require('../../src/ports/outbound/payment-repository.port');
-const { PaymentProvider } = require('../../src/ports/outbound/payment-provider.port');
-const { IdempotencyStore } = require('../../src/ports/outbound/idempotency-store.port');
+const { PaymentRepository } = require('../../src/ports/outbound/PaymentRepository');
+const { PaymentProvider } = require('../../src/ports/outbound/PaymentProvider');
+const { IdempotencyStore } = require('../../src/ports/outbound/IdempotencyStore');
 
 const PORTS = [PaymentRepository, PaymentProvider, IdempotencyStore];
 

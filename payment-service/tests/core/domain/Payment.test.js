@@ -1,11 +1,11 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { Payment } = require('../../../src/core/domain/payment');
-const { PAYMENT_STATUSES } = require('../../../src/core/domain/payment-status');
+const { Payment } = require('../../../src/core/domain/Payment');
+const { PAYMENT_STATUSES } = require('../../../src/core/domain/PaymentStatus');
 const {
   InvalidMoneyError,
   InvalidPaymentTransitionError,
-} = require('../../../src/core/domain/errors');
+} = require('../../../src/core/domain/DomainErrors');
 
 const VALID_PAYMENT = {
   sessionId: '00000000-0000-0000-0000-000000000001',

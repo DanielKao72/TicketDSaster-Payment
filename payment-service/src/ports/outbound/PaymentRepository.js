@@ -1,4 +1,4 @@
-const { NotImplementedError, ensurePortImplementation } = require('../port');
+const { NotImplementedError, ensurePortImplementation } = require('../Port');
 
 // Outbound port: persistence of the Payment aggregate.
 // Adapters live in src/adapters/repositories/ and extend this class.

@@ -1,4 +1,4 @@
-const { NotImplementedError, ensurePortImplementation } = require('../port');
+const { NotImplementedError, ensurePortImplementation } = require('../Port');
 
 // Outbound port: storage of Idempotency Keys (table `idempotency_keys`).
 // A repeated key with the same requestHash replays the stored response; with a

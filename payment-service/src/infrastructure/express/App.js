@@ -1,6 +1,6 @@
 const express = require('express');
-const healthRoutes = require('./routes/health.routes');
-const { errorHandler } = require('./middlewares/error-handler');
+const healthRoutes = require('./routes/HealthRoutes');
+const { errorHandler } = require('./middlewares/ErrorHandler');
 
 // The composition root (src/index.js) passes the adapters here; payment routes will
 // receive them as `buildApp({ paymentProvider, ... })` once the use cases exist.

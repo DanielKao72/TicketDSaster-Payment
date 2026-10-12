@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { buildOpenApiSpec } = require('../src/infrastructure/express/openapi');
+const { buildOpenApiSpec } = require('../src/infrastructure/express/OpenApi');
 const config = require('../src/infrastructure/config');
 
 test('OpenAPI spec documents GET /health', () => {

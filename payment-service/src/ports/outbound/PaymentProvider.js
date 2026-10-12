@@ -1,4 +1,4 @@
-const { NotImplementedError, ensurePortImplementation } = require('../port');
+const { NotImplementedError, ensurePortImplementation } = require('../Port');
 
 // Outbound port: the external payment provider (Anti-Corruption Layer).
 // Adapters live in src/adapters/providers/, one per provider, and extend this class.

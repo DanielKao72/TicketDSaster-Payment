@@ -1,6 +1,6 @@
 const { test, before, after } = require('node:test');
 const assert = require('node:assert');
-const { buildApp } = require('../src/infrastructure/express/app');
+const { buildApp } = require('../src/infrastructure/express/App');
 
 let server;
 let baseUrl;

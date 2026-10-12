@@ -1,5 +1,5 @@
 const crypto = require('node:crypto');
-const { PaymentProvider } = require('../../ports/outbound/payment-provider.port');
+const { PaymentProvider } = require('../../ports/outbound/PaymentProvider');
 
 const DECLINE_TOKEN = 'tok_decline';
 

@@ -1,4 +1,4 @@
-const { InvalidMoneyError } = require('./errors');
+const { InvalidMoneyError } = require('./DomainErrors');
 
 const CURRENCY_CODE = /^[A-Z]{3}$/;
 

@@ -18,7 +18,7 @@ src/
 │   ├── domain/            # Payment aggregate, PaymentStatus + transitions, Money, domain errors
 │   └── use-cases/         # One class per use case (CreatePaymentUseCase…), ports injected via constructor
 ├── ports/
-│   ├── port.js            # NotImplementedError + ensurePortImplementation
+│   ├── Port.js            # NotImplementedError + ensurePortImplementation
 │   └── outbound/          # Abstract classes, one per port: PaymentRepository, PaymentProvider, IdempotencyStore
 ├── adapters/
 │   ├── controllers/       # HTTP request handlers: translate HTTP ↔ use case
@@ -27,7 +27,7 @@ src/
 ├── infrastructure/
 │   ├── config/            # env, db config, provider config
 │   ├── database/          # knex instance
-│   └── express/           # app.js (buildApp), openapi.js, routes/, middlewares/
+│   └── express/           # App.js (buildApp), OpenApi.js, routes/, middlewares/
 └── index.js               # Composition root: wires adapters into use cases and starts the server
 tests/                     # Mirrors src/ (tests/core/domain/, tests/adapters/…)
 Dockerfile
@@ -46,14 +46,19 @@ class PostgresPaymentRepository extends PaymentRepository {
     this.db = db;
   }
 
-  async save(payment) { /* ... */ }
-  async findById(id) { /* ... */ }
-  async findBySessionId(sessionId) { /* ... */ }
+  async save(payment) {
+    /* ... */
+  }
+  async findById(id) {
+    /* ... */
+  }
+  async findBySessionId(sessionId) {
+    /* ... */
+  }
 }
 ```
 
-The port's constructor calls `ensurePortImplementation` (`src/ports/port.js`), so instantiating the port directly, or an adapter that is missing a method, throws a `TypeError` at creation time.
-
+The port's constructor calls `ensurePortImplementation` (`src/ports/Port.js`), so instantiating the port directly, or an adapter that is missing a method, throws a `TypeError` at creation time.
 
 ## Node.js / Express Conventions
 
@@ -76,30 +81,32 @@ The port's constructor calls `ensurePortImplementation` (`src/ports/port.js`), s
 
 ### Naming Conventions
 
-| Element | Convention | Example |
-|---|---|---|
-| Files | kebab-case | `payment.controller.js` |
-| Classes | PascalCase | `PaymentService` |
-| Functions/variables | camelCase | `createPayment`, `refundPayment` |
-| Constants | UPPER_SNAKE_CASE | `PAYMENT_TIMEOUT_MS` |
-| Env vars | UPPER_SNAKE_CASE | `JWT_SECRET`, `PAYMENT_PROVIDER_API_KEY` |
+| Element             | Convention                                                                             | Example                                   |
+| ------------------- | -------------------------------------------------------------------------------------- | ----------------------------------------- |
+| Files               | UpperCamelCase, named after what they export (except `index.js` and tool config files) | `PaymentController.js`, `Payment.test.js` |
+| Classes             | PascalCase                                                                             | `PaymentService`                          |
+| Functions/variables | camelCase                                                                              | `createPayment`, `refundPayment`          |
+| Constants           | UPPER_SNAKE_CASE                                                                       | `PAYMENT_TIMEOUT_MS`                      |
+| Env vars            | UPPER_SNAKE_CASE                                                                       | `JWT_SECRET`, `PAYMENT_PROVIDER_API_KEY`  |
 
 ## Payment & Security Conventions
 
-- **Authentication:** this service does not issue tokens. The JWT issued by the Auth Service is validated in `infrastructure/express/middlewares/jwt-auth.js` (signature + expiration), using the key provided via environment variables. Expected payload:
+- **Authentication:** this service does not issue tokens. The JWT issued by the Auth Service is validated in `infrastructure/express/middlewares/JwtAuth.js` (signature + expiration), using the key provided via environment variables. Expected payload:
+
 ```json
-  {
-    "sub": "userId",
-    "role": "Fan | Organizer | VenueOwner",
-    "iat": 0,
-    "exp": 0
-  }
+{
+  "sub": "userId",
+  "role": "Fan | Organizer | VenueOwner",
+  "iat": 0,
+  "exp": 0
+}
 ```
-- Role-based access control (RBAC) middleware (`infrastructure/express/middlewares/require-role.js`) must be used to protect role-specific routes rather than checking roles inline in controllers.
+
+- Role-based access control (RBAC) middleware (`infrastructure/express/middlewares/RequireRole.js`) must be used to protect role-specific routes rather than checking roles inline in controllers.
 - **Money:** amounts are always stored and transported as **integers in the currency's minor unit** (e.g. cents) together with an ISO 4217 `currency` code. Never use `float` for money.
-- **Idempotency:** every `POST` that creates a payment or refund must require an `Idempotency-Key` header, handled by `infrastructure/express/middlewares/idempotency.js` and persisted in the Payment Store through the `idempotency-store` port.
-- **Status transitions** (`PENDING → AUTHORIZED → CAPTURED`, `FAILED`, `REFUNDED`) must be centralized in the `Payment` aggregate (`core/domain/payment.js`, with the allowed transitions in `core/domain/payment-status.js`), never in controllers or use cases. Invalid transitions throw `InvalidPaymentTransitionError` (mapped to `409`).
-- **External provider:** all communication goes through an adapter in `src/adapters/providers/` that implements `src/ports/outbound/payment-provider.port.js`; each provider has its own adapter. No provider-specific types or statuses may leak outside that folder.
+- **Idempotency:** every `POST` that creates a payment or refund must require an `Idempotency-Key` header, handled by `infrastructure/express/middlewares/Idempotency.js` and persisted in the Payment Store through the `IdempotencyStore` port.
+- **Status transitions** (`PENDING → AUTHORIZED → CAPTURED`, `FAILED`, `REFUNDED`) must be centralized in the `Payment` aggregate (`core/domain/Payment.js`, with the allowed transitions in `core/domain/PaymentStatus.js`), never in controllers or use cases. Invalid transitions throw `InvalidPaymentTransitionError` (mapped to `409`).
+- **External provider:** all communication goes through an adapter in `src/adapters/providers/` that implements `src/ports/outbound/PaymentProvider.js`; each provider has its own adapter. No provider-specific types or statuses may leak outside that folder.
 - Calls to the provider must have **timeouts** and **retries with backoff**, always reusing the same idempotency key.
 - Provider callbacks/webhooks must **verify their signature** before changing a payment's status.
 - **Never** store or log card data (PAN, CVV, expiration date): card capture is delegated to the provider (PCI DSS). Logs must not include secrets or sensitive personal data.
@@ -107,7 +114,7 @@ The port's constructor calls `ensurePortImplementation` (`src/ports/port.js`), s
 
 ## Testing
 
-- Tests live in `tests/`, mirroring `src/` (e.g. `tests/core/domain/payment.test.js`).
+- Tests live in `tests/`, mirroring `src/` (e.g. `tests/core/domain/Payment.test.js`).
 - Domain tests (`tests/core/domain/`) need no mocks: the domain has no dependencies.
 - Use-case tests (`tests/core/use-cases/`) inject fake adapters that extend the ports (in-memory repository, `FakePaymentProvider`) instead of mocking modules.
 - Integration tests for routes build the app with `buildApp(deps)` and use a test database or in-memory adapters.

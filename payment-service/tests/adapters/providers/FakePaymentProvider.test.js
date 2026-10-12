@@ -4,8 +4,8 @@ const crypto = require('node:crypto');
 const {
   FakePaymentProvider,
   DECLINE_TOKEN,
-} = require('../../../src/adapters/providers/fake-payment-provider');
-const { PaymentProvider } = require('../../../src/ports/outbound/payment-provider.port');
+} = require('../../../src/adapters/providers/FakePaymentProvider');
+const { PaymentProvider } = require('../../../src/ports/outbound/PaymentProvider');
 
 const AUTHORIZE_REQUEST = {
   paymentId: 'payment-1',
