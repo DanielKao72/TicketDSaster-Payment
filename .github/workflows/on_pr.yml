@@ -1,0 +1,45 @@
+name: CI
+
+# Push to main too: scripts/bump.sh only tags a main commit with a green run of this workflow.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: payment-service
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: "checkout code"
+        uses: actions/checkout@v5
+
+      - name: "Setup node js"
+        uses: actions/setup-node@v5
+        with:
+          node-version-file: payment-service/.nvmrc
+          cache: npm
+          cache-dependency-path: payment-service/package-lock.json
+
+      - name: "install dependencies"
+        run: npm ci
+
+      - name: "lint"
+        run: npm run lint
+
+      - name: "tests"
+        run: npm test
+
+      - name: "build docker image"
+        run: docker build -t payment-service:ci .

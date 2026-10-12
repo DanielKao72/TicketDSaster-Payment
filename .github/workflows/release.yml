@@ -1,0 +1,56 @@
+name: Release
+
+# Tags are created with scripts/bump.sh (see README > Releases).
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+# Each job asks for exactly what it needs.
+permissions:
+  contents: read
+
+jobs:
+  # TODO: add the docker-image job (build and push to the registry over Tailscale) once the
+  # TS_OAUTH_CLIENT_ID, TS_OAUTH_AUDIENCE, REGISTRY_USER and REGISTRY_PASS secrets exist,
+  # and make github-release depend on it (needs: docker-image).
+  # Reference: https://github.com/CarlosHPlata/sample-api/blob/main/.github/workflows/release.yml
+
+  github-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the release
+
+    steps:
+      - name: "checkout code"
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # full history and tags: the changelog reads commits since the previous release
+
+      - name: "Build changelog"
+        # No pipe into tee: steps run without pipefail, so a failing script would pass unnoticed.
+        run: |
+          bash scripts/changelog.sh "$GITHUB_REF_NAME" > release-notes.md
+          cat release-notes.md
+
+      - name: "Setup node js"
+        uses: actions/setup-node@v5
+        with:
+          node-version-file: payment-service/.nvmrc
+          cache: npm
+          cache-dependency-path: payment-service/package-lock.json
+
+      - name: "Install dependencies"
+        working-directory: payment-service
+        run: npm ci
+
+      - name: "Generate OpenAPI spec"
+        working-directory: payment-service
+        run: APP_VERSION="${GITHUB_REF_NAME#v}" npm run openapi
+
+      - name: "Release openapi def"
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          body_path: release-notes.md
+          files: payment-service/openapi.json
+          fail_on_unmatched_files: true
