@@ -1,31 +1,37 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Coding Agent when working with code in this repository.
+This file provides guidance to AI coding agents when working with code in this repository.
 
 ## Overview
 
-Payment Service for the Ticket D-Saster platform (Node.js ≥ 20 + Express, CommonJS). The service code lives in `payment-service/`; design docs live in `docs/`. It is at an early scaffold stage: only `GET /health` exists so far.
+Payment Service for the Ticket D-Saster platform (Node.js 20 + Express, CommonJS, PostgreSQL via knex). The service code and its `package.json` live in `payment-service/`. Design docs are in `docs/`, release scripts in `scripts/`, and CI workflows in `.github/workflows/`. Only `GET /health` exists so far.
 
 ## Commands
 
 Run from `payment-service/`:
 
 ```bash
-npm install
+npm install                                # also installs the husky git hooks (prepare script)
 npm start                                  # node src/app.js (PORT from env, default 3000)
+npm run lint                               # eslint + prettier --check
+npm run format                             # prettier --write
 npm test                                   # node --test (built-in runner, discovers tests/)
 node --test tests/health.test.js           # single test file
 node --test --test-name-pattern="health"   # tests matching a name
-docker build -t payment-service .
+npm run openapi                            # writes openapi.json (APP_VERSION overrides info.version)
+npm run db:migrate | db:rollback | db:seed # knex, needs DATABASE_URL
+docker compose up --build                  # Postgres + migrations/seeds + service (cp .env.example .env first)
 ```
 
-The contributing docs reference `npm run lint` (ESLint + Prettier), husky/commitlint hooks, `docker-compose.yml`, and a CI commitlint workflow — **none of these exist yet**. Don't assume them; add them if the task calls for it.
+From the repo root, `scripts/changelog.sh HEAD` previews the next release notes and `scripts/bump.sh --dry-run` shows the next version.
 
 ## Architecture
 
 - `src/app.js` builds and exports the Express app and only calls `listen()` when run directly (`require.main === module`). Tests import the app and call `app.listen(0)` on an ephemeral port, then hit it with global `fetch`.
 - Layering is routes → controllers → services, with the target layout (from `docs/contributing/code-standards.md`): `config/`, `controllers/`, `routes/`, `services/`, `models/`, `middlewares/`, `providers/`, `utils/`. Files are kebab-case with a role suffix (`payment.controller.js`, `health.routes.js`).
-- All env access goes through `src/config/index.js`. Don't read `process.env` anywhere else.
+- All env access goes through `src/config/index.js` (`port`, `appVersion`, `database.url`). Don't read `process.env` anywhere else.
+- **OpenAPI is generated from code.** Every route needs an `@openapi` JSDoc block in `src/routes/*.js`, which `src/docs/openapi.js` (swagger-jsdoc) collects. `tests/openapi.test.js` checks the spec.
+- **Payment Store schema** is in `db/migrations/` (`payments`, `transactions`, `idempotency_keys`, with native Postgres enums for statuses). `db/seeds/` holds dummy data with one payment per status. Change the schema with a new migration; never edit an applied one.
 
 ### Domain context (see `docs/ddd/domain-model.md`, `docs/architecture/c4-model.md`)
 
@@ -33,13 +39,11 @@ The contributing docs reference `npm run lint` (ESLint + Prettier), husky/commit
 - It is the only component that talks to the **external payment provider**. That access goes through an Anti-Corruption Layer in `src/providers/`: `payment-provider.js` defines the interface, with one implementation per provider. Provider-specific statuses and types must not leak out of that folder.
 - Use the ubiquitous language in code: `Payment` (aggregate root), `PaymentRequest`, `Transaction`, `Refund`, `PaymentStatus`, `IdempotencyKey`.
 
-### Planned conventions
-
-These conventions apply when building payment features:
+### Conventions for payment features
 
 - **Money**: integer minor units (cents) plus an ISO 4217 `currency`. Never floats.
 - **Status transitions** (`PENDING → AUTHORIZED → CAPTURED`, plus `FAILED`, `REFUNDED`) live only in `services/payment.service.js`, which rejects invalid transitions.
-- **Idempotency**: every POST that creates a payment or refund requires an `Idempotency-Key` header (`middlewares/idempotency.js`, persisted in the Payment Store). Provider retries reuse the same key, with timeouts and backoff.
+- **Idempotency**: every POST that creates a payment or refund requires an `Idempotency-Key` header (`middlewares/idempotency.js`, persisted in `idempotency_keys`). Provider retries reuse the same key, with timeouts and backoff.
 - **Auth**: the service validates JWTs and never issues them (`middlewares/jwt-auth.js`; payload `{ sub, role: Fan|Organizer|VenueOwner, iat, exp }`). Role checks go through `middlewares/require-role.js`, never inline in controllers.
 - **Webhooks** from the provider must have their signature verified before they change a payment's status.
 - Never store or log card data (PAN, CVV, expiry), because card capture is delegated to the provider.
@@ -49,5 +53,8 @@ These conventions apply when building payment features:
 
 ## Repository workflow
 
+- `main` is protected: changes go through a PR and are squash-merged.
 - Branches: `feature/`, `fix/`, `chore/`, `hotfix/` + kebab-case description.
-- Commits and PR titles follow Conventional Commits (`feat(payment): add refund endpoint`). PRs are squash-merged into `main`.
+- Commits and PR titles follow Conventional Commits (`feat(payment): add refund endpoint`). The husky `commit-msg` hook and `.github/workflows/commitlint.yml` enforce it. The `pre-commit` hook runs lint-staged.
+- **CI** (`.github/workflows/on_pr.yml`) runs lint, tests and a Docker build on every PR and on pushes to `main`. Keep that file name: `scripts/bump.sh` looks it up.
+- **Releases** are `vM.m.p` tags created with `scripts/bump.sh` from an up-to-date, CI-green `main`. Major deploys to prod and dev, minor to dev only, patch is published but not deployed. A pushed tag triggers `.github/workflows/release.yml`, which creates the GitHub release with notes from `scripts/changelog.sh` and attaches `openapi.json`. The Docker image push job is still a TODO there.
