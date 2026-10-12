@@ -1,0 +1,52 @@
+name: Conventional Commits
+
+on:
+  pull_request:
+    branches: [main, develop]
+    # "edited" re-runs the check when the title is fixed; it isn't a default type.
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: payment-service
+
+jobs:
+  lint:
+    name: PR title and commits
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: "checkout code"
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # the PR's own commits and the base branch to compare against
+
+      - name: "Setup node js"
+        uses: actions/setup-node@v5
+        with:
+          node-version-file: payment-service/.nvmrc
+          cache: npm
+          cache-dependency-path: payment-service/package-lock.json
+
+      - name: "install dependencies"
+        run: npm ci
+
+      # Same rules as the commit-msg hook: payment-service/commitlint.config.js.
+      # The PR title becomes the squash commit message.
+      - name: "PR title"
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }} # untrusted input: env, never ${{ }} inside run
+        run: printf '%s\n' "$PR_TITLE" | npx --no -- commitlint
+
+      # Hooks can be skipped (--no-verify, GitHub's web editor), so check the commits too.
+      - name: "commits"
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: npx --no -- commitlint --from "origin/$GITHUB_BASE_REF" --to "$HEAD_SHA"

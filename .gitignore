@@ -1,0 +1,9 @@
+node_modules
+.env
+
+# Generated OpenAPI definition (published by the release pipeline)
+openapi*.json
+
+CLAUDE.md
+project-repository-prerequisites.md
+how-releases-are-done.md

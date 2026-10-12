@@ -1,0 +1,2 @@
+# commitlint resolves --edit relative to the git root, so $1 is passed as-is.
+cd payment-service && npx --no -- commitlint --edit "$1"
