@@ -30,8 +30,8 @@ From the repo root, `scripts/changelog.sh HEAD` previews the next release notes 
 **Hexagonal architecture** (ports and adapters). The layout of `payment-service/src/` is:
 
 - `core/domain/`: the `Payment` aggregate, `payment-status.js` (statuses and allowed transitions), the `money.js` value object and domain errors.
-- `core/use-cases/`: one file per use case (`create-payment.js`…). Each one is a factory that receives its ports as dependencies.
-- `ports/outbound/`: JSDoc contracts (`*.port.js`), one per port: `payment-repository`, `payment-provider`, `idempotency-store`.
+- `core/use-cases/`: one class per use case (`create-payment.js` → `CreatePaymentUseCase` with `execute()`). Ports are injected through the constructor.
+- `ports/outbound/`: abstract classes (`*.port.js`), one per port: `PaymentRepository`, `PaymentProvider`, `IdempotencyStore`. Adapters `extend` them. The port's constructor calls `ensurePortImplementation` (`ports/port.js`), which rejects instantiating the port itself and throws if the adapter does not override every method. An incomplete adapter therefore fails when it is created, not mid-payment.
 - `adapters/`: `controllers/` (HTTP → use case), `repositories/` (knex implementations of the ports) and `providers/` (the payment provider ACL).
 - `infrastructure/`: `config/`, `database/` (knex instance), and `express/` (`app.js`, `openapi.js`, `routes/`, `middlewares/`).
 
@@ -39,7 +39,7 @@ Rules:
 
 - **Dependency rule:** `src/core/` requires nothing outside itself: no express, knex, pg, adapters or infrastructure. An ESLint `no-restricted-syntax` rule in `eslint.config.js` enforces it.
 - **Entrypoint:** `src/index.js` is the composition root. It is the only file that creates adapters, injects them into `buildApp(deps)` (`infrastructure/express/app.js`) and calls `listen()`.
-- **Tests:** they call `buildApp().listen(0)` on an ephemeral port and hit it with global `fetch`. Use-case tests inject fakes instead of mocking modules (`adapters/providers/fake-payment-provider.js` is the provider fake).
+- **Tests:** they call `buildApp().listen(0)` on an ephemeral port and hit it with global `fetch`. Use-case tests inject fakes instead of mocking modules (`FakePaymentProvider` in `adapters/providers/fake-payment-provider.js` is the provider fake).
 - **Naming:** files are kebab-case with a role suffix (`payment.controller.js`, `health.routes.js`, `payment-provider.port.js`).
 - **Config:** all env access goes through `src/infrastructure/config/index.js` (`port`, `appVersion`, `database.url`). Don't read `process.env` anywhere else.
 - **OpenAPI is generated from code.** Every route needs an `@openapi` JSDoc block in `src/infrastructure/express/routes/*.js`, which `src/infrastructure/express/openapi.js` (swagger-jsdoc) collects. `tests/openapi.test.js` checks the spec.

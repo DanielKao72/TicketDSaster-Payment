@@ -16,9 +16,10 @@ The service follows a **hexagonal architecture** (ports and adapters):
 src/
 ├── core/
 │   ├── domain/            # Payment aggregate, PaymentStatus + transitions, Money, domain errors
-│   └── use-cases/         # One file per use case (create-payment, refund-payment…), ports injected
+│   └── use-cases/         # One class per use case (CreatePaymentUseCase…), ports injected via constructor
 ├── ports/
-│   └── outbound/          # JSDoc contracts, one per port: payment-repository, payment-provider, idempotency-store
+│   ├── port.js            # NotImplementedError + ensurePortImplementation
+│   └── outbound/          # Abstract classes, one per port: PaymentRepository, PaymentProvider, IdempotencyStore
 ├── adapters/
 │   ├── controllers/       # HTTP request handlers: translate HTTP ↔ use case
 │   ├── repositories/      # knex implementations of the repository/store ports
@@ -34,7 +35,24 @@ docker-compose.yml
 .env.example
 ```
 
-**Dependency rule:** dependencies point inward. `core/` must not require express, knex, pg or anything from `adapters/` or `infrastructure/`; ESLint enforces it (`eslint.config.js`). Adapters implement ports, and only `src/index.js` decides which adapter is used.
+**Dependency rule:** dependencies point inward. `core/` must not require express, knex, pg or anything from `adapters/` or `infrastructure/`; ESLint enforces it (`eslint.config.js`). Only `src/index.js` decides which adapter is used.
+
+**Ports are abstract classes.** An adapter `extends` its port and overrides every method:
+
+```js
+class PostgresPaymentRepository extends PaymentRepository {
+  constructor(db) {
+    super(); // throws if a port method is not overridden
+    this.db = db;
+  }
+
+  async save(payment) { /* ... */ }
+  async findById(id) { /* ... */ }
+  async findBySessionId(sessionId) { /* ... */ }
+}
+```
+
+The port's constructor calls `ensurePortImplementation` (`src/ports/port.js`), so instantiating the port directly, or an adapter that is missing a method, throws a `TypeError` at creation time.
 
 
 ## Node.js / Express Conventions
@@ -91,7 +109,7 @@ docker-compose.yml
 
 - Tests live in `tests/`, mirroring `src/` (e.g. `tests/core/domain/payment.test.js`).
 - Domain tests (`tests/core/domain/`) need no mocks: the domain has no dependencies.
-- Use-case tests (`tests/core/use-cases/`) inject fake ports (in-memory repository, `fake-payment-provider`) instead of mocking modules.
+- Use-case tests (`tests/core/use-cases/`) inject fake adapters that extend the ports (in-memory repository, `FakePaymentProvider`) instead of mocking modules.
 - Integration tests for routes build the app with `buildApp(deps)` and use a test database or in-memory adapters.
 - Minimum coverage threshold enforced in CI (e.g. 80%), especially on `core/` and the provider adapters.
 - Explicitly test idempotency (same key → same result, no double charge) and invalid status transitions.

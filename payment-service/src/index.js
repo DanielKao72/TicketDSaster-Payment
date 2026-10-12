@@ -1,9 +1,9 @@
 // Composition root: the only place that wires adapters into the app and starts the server.
 const config = require('./infrastructure/config');
 const { buildApp } = require('./infrastructure/express/app');
-const { createFakePaymentProvider } = require('./adapters/providers/fake-payment-provider');
+const { FakePaymentProvider } = require('./adapters/providers/fake-payment-provider');
 
-const paymentProvider = createFakePaymentProvider();
+const paymentProvider = new FakePaymentProvider();
 const app = buildApp({ paymentProvider });
 
 app.listen(config.port, () => {

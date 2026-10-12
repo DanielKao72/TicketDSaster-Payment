@@ -2,9 +2,10 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const crypto = require('node:crypto');
 const {
-  createFakePaymentProvider,
+  FakePaymentProvider,
   DECLINE_TOKEN,
 } = require('../../../src/adapters/providers/fake-payment-provider');
+const { PaymentProvider } = require('../../../src/ports/outbound/payment-provider.port');
 
 const AUTHORIZE_REQUEST = {
   paymentId: 'payment-1',
@@ -14,8 +15,12 @@ const AUTHORIZE_REQUEST = {
   idempotencyKey: 'key-1',
 };
 
+test('FakePaymentProvider implements the PaymentProvider port', () => {
+  assert.ok(new FakePaymentProvider() instanceof PaymentProvider);
+});
+
 test('authorize returns AUTHORIZED in domain language', async () => {
-  const provider = createFakePaymentProvider();
+  const provider = new FakePaymentProvider();
 
   const result = await provider.authorize(AUTHORIZE_REQUEST);
 
@@ -24,7 +29,7 @@ test('authorize returns AUTHORIZED in domain language', async () => {
 });
 
 test('the decline token returns FAILED with a reason', async () => {
-  const provider = createFakePaymentProvider();
+  const provider = new FakePaymentProvider();
 
   const result = await provider.authorize({
     ...AUTHORIZE_REQUEST,
@@ -36,7 +41,7 @@ test('the decline token returns FAILED with a reason', async () => {
 });
 
 test('the same idempotency key does not charge twice', async () => {
-  const provider = createFakePaymentProvider();
+  const provider = new FakePaymentProvider();
 
   const first = await provider.authorize(AUTHORIZE_REQUEST);
   const retry = await provider.authorize(AUTHORIZE_REQUEST);
@@ -47,7 +52,7 @@ test('the same idempotency key does not charge twice', async () => {
 });
 
 test('capture and refund return CAPTURED and REFUNDED', async () => {
-  const provider = createFakePaymentProvider();
+  const provider = new FakePaymentProvider();
   const { providerReference } = await provider.authorize(AUTHORIZE_REQUEST);
 
   const captured = await provider.capture({
@@ -68,7 +73,7 @@ test('capture and refund return CAPTURED and REFUNDED', async () => {
 });
 
 test('verifyWebhookSignature accepts only the HMAC of the body', () => {
-  const provider = createFakePaymentProvider({ webhookSecret: 'secret' });
+  const provider = new FakePaymentProvider({ webhookSecret: 'secret' });
   const body = '{"event":"charge.succeeded"}';
   const signature = crypto.createHmac('sha256', 'secret').update(body).digest('hex');
 

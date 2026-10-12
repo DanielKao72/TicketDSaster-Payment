@@ -1,14 +1,26 @@
-/**
- * Outbound port: persistence of the Payment aggregate.
- * Implemented in src/adapters/repositories/.
- *
- * @typedef {import('../../core/domain/payment').Payment} Payment
- *
- * @typedef {object} PaymentRepository
- * @property {(payment: Payment) => Promise<Payment>} save
- *   Inserts or updates the payment and returns it with its persisted id and timestamps.
- * @property {(id: string) => Promise<Payment | null>} findById
- * @property {(sessionId: string) => Promise<Payment | null>} findBySessionId
- */
+const { NotImplementedError, ensurePortImplementation } = require('../port');
 
-module.exports = {};
+// Outbound port: persistence of the Payment aggregate.
+// Adapters live in src/adapters/repositories/ and extend this class.
+class PaymentRepository {
+  constructor() {
+    ensurePortImplementation(this, PaymentRepository);
+  }
+
+  // Inserts or updates the payment; resolves to the persisted Payment (with id and timestamps).
+  async save(payment) {
+    throw new NotImplementedError('PaymentRepository.save');
+  }
+
+  // Resolves to a Payment, or null if it does not exist.
+  async findById(id) {
+    throw new NotImplementedError('PaymentRepository.findById');
+  }
+
+  // Resolves to the Payment of that Session, or null.
+  async findBySessionId(sessionId) {
+    throw new NotImplementedError('PaymentRepository.findBySessionId');
+  }
+}
+
+module.exports = { PaymentRepository };

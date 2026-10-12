@@ -1,76 +1,78 @@
 const crypto = require('node:crypto');
-
-/**
- * In-memory provider for local development and tests. It implements the
- * PaymentProvider port (src/ports/outbound/payment-provider.port.js).
- *
- * It mimics a real provider with its own vocabulary (`requires_capture`,
- * `succeeded`, `declined`), which is translated to ProviderResult in `toProviderResult`.
- * Those statuses never leave this file.
- */
+const { PaymentProvider } = require('../../ports/outbound/payment-provider.port');
 
 const DECLINE_TOKEN = 'tok_decline';
 
-function toProviderResult(providerOperation, chargeStatus, providerReference, declineCode) {
-  if (chargeStatus === 'declined') {
-    return { status: 'FAILED', providerReference, declineReason: declineCode };
-  }
-  if (chargeStatus === 'requires_capture') {
-    return { status: 'AUTHORIZED', providerReference };
-  }
-  if (chargeStatus === 'succeeded') {
-    return { status: providerOperation === 'refund' ? 'REFUNDED' : 'CAPTURED', providerReference };
-  }
-  return { status: 'PENDING', providerReference };
-}
-
-function createFakePaymentProvider({ webhookSecret = 'fake-webhook-secret' } = {}) {
+/**
+ * In-memory provider for local development and tests.
+ *
+ * It mimics a real provider with its own vocabulary (`requires_capture`,
+ * `succeeded`, `declined`), which `#toProviderResult` translates into the
+ * domain's ProviderResult. Those statuses never leave this file.
+ */
+class FakePaymentProvider extends PaymentProvider {
   // idempotencyKey -> ProviderResult, so retries with the same key never charge twice.
-  const operations = new Map();
+  #operations = new Map();
+  #webhookSecret;
 
-  function once(idempotencyKey, run) {
-    if (!operations.has(idempotencyKey)) {
-      operations.set(idempotencyKey, run());
-    }
-    return operations.get(idempotencyKey);
+  constructor({ webhookSecret = 'fake-webhook-secret' } = {}) {
+    super();
+    this.#webhookSecret = webhookSecret;
   }
 
-  function newReference(prefix) {
+  async authorize({ paymentMethodToken, idempotencyKey }) {
+    return this.#once(idempotencyKey, () => {
+      const reference = this.#newReference('ch');
+      if (paymentMethodToken === DECLINE_TOKEN) {
+        return this.#toProviderResult('charge', 'declined', reference, 'card_declined');
+      }
+      return this.#toProviderResult('charge', 'requires_capture', reference);
+    });
+  }
+
+  async capture({ providerReference, idempotencyKey }) {
+    return this.#once(idempotencyKey, () =>
+      this.#toProviderResult('capture', 'succeeded', providerReference),
+    );
+  }
+
+  async refund({ idempotencyKey }) {
+    return this.#once(idempotencyKey, () =>
+      this.#toProviderResult('refund', 'succeeded', this.#newReference('re')),
+    );
+  }
+
+  verifyWebhookSignature(rawBody, signature) {
+    const expected = crypto.createHmac('sha256', this.#webhookSecret).update(rawBody).digest('hex');
+    const received = Buffer.from(String(signature ?? ''));
+    return (
+      received.length === expected.length && crypto.timingSafeEqual(received, Buffer.from(expected))
+    );
+  }
+
+  #once(idempotencyKey, run) {
+    if (!this.#operations.has(idempotencyKey)) {
+      this.#operations.set(idempotencyKey, run());
+    }
+    return this.#operations.get(idempotencyKey);
+  }
+
+  #newReference(prefix) {
     return `${prefix}_${crypto.randomUUID()}`;
   }
 
-  return {
-    async authorize({ paymentMethodToken, idempotencyKey }) {
-      return once(idempotencyKey, () => {
-        const reference = newReference('ch');
-        if (paymentMethodToken === DECLINE_TOKEN) {
-          return toProviderResult('charge', 'declined', reference, 'card_declined');
-        }
-        return toProviderResult('charge', 'requires_capture', reference);
-      });
-    },
-
-    async capture({ providerReference, idempotencyKey }) {
-      return once(idempotencyKey, () =>
-        toProviderResult('capture', 'succeeded', providerReference),
-      );
-    },
-
-    async refund({ idempotencyKey }) {
-      return once(idempotencyKey, () =>
-        toProviderResult('refund', 'succeeded', newReference('re')),
-      );
-    },
-
-    verifyWebhookSignature(rawBody, signature) {
-      const expected = crypto.createHmac('sha256', webhookSecret).update(rawBody).digest('hex');
-      const received = Buffer.from(String(signature ?? ''));
-      return (
-        received.length === expected.length &&
-        crypto.timingSafeEqual(received, Buffer.from(expected))
-      );
-    },
-  };
+  #toProviderResult(operation, chargeStatus, providerReference, declineCode) {
+    if (chargeStatus === 'declined') {
+      return { status: 'FAILED', providerReference, declineReason: declineCode };
+    }
+    if (chargeStatus === 'requires_capture') {
+      return { status: 'AUTHORIZED', providerReference };
+    }
+    if (chargeStatus === 'succeeded') {
+      return { status: operation === 'refund' ? 'REFUNDED' : 'CAPTURED', providerReference };
+    }
+    return { status: 'PENDING', providerReference };
+  }
 }
 
-module.exports = { createFakePaymentProvider, DECLINE_TOKEN };
+module.exports = { FakePaymentProvider, DECLINE_TOKEN };

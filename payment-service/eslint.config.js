@@ -29,5 +29,13 @@ module.exports = [
       ],
     },
   },
+  {
+    // Ports are abstract classes: their method signatures document the contract,
+    // so the parameters are intentionally unused.
+    files: ['src/ports/**/*.js'],
+    rules: {
+      'no-unused-vars': ['error', { args: 'none' }],
+    },
+  },
   prettier,
 ];
