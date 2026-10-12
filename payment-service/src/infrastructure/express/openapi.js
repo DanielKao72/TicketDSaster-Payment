@@ -13,7 +13,7 @@ function buildOpenApiSpec() {
       },
     },
     // Globs need forward slashes, even on Windows.
-    apis: [path.join(__dirname, '../routes/*.js').replaceAll('\\', '/')],
+    apis: [path.join(__dirname, 'routes/*.js').replaceAll('\\', '/')],
   });
 }
 

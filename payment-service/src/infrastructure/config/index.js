@@ -1,4 +1,4 @@
-const { version } = require('../../package.json');
+const { version } = require('../../../package.json');
 
 const config = {
   port: Number(process.env.PORT) || 3000,
