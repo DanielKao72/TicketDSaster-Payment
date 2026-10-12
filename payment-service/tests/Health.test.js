@@ -1,12 +1,12 @@
 const { test, before, after } = require('node:test');
 const assert = require('node:assert');
-const app = require('../src/app');
+const { buildApp } = require('../src/infrastructure/express/App');
 
 let server;
 let baseUrl;
 
 before(() => {
-  server = app.listen(0);
+  server = buildApp().listen(0);
   baseUrl = `http://localhost:${server.address().port}`;
 });
 

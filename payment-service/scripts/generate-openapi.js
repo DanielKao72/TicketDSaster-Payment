@@ -1,6 +1,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
-const { buildOpenApiSpec } = require('../src/docs/openapi');
+const { buildOpenApiSpec } = require('../src/infrastructure/express/OpenApi');
 
 const outputFile = path.resolve(process.argv[2] || 'openapi.json');
 

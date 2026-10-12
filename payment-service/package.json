@@ -2,10 +2,10 @@
   "name": "payment-service",
   "version": "0.1.0",
   "description": "Ticket D-Saster Payment Service",
-  "main": "src/app.js",
+  "main": "src/index.js",
   "private": true,
   "scripts": {
-    "start": "node src/app.js",
+    "start": "node src/index.js",
     "test": "node --test",
     "lint": "eslint . && prettier --check .",
     "format": "prettier --write .",
