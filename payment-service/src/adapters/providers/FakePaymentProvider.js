@@ -1,7 +1,10 @@
 const crypto = require('node:crypto');
 const { PaymentProvider } = require('../../ports/outbound/PaymentProvider');
+const { ProviderUnavailableError } = require('../../core/domain/DomainErrors');
 
+// Test tokens: any other paymentMethodToken is authorized.
 const DECLINE_TOKEN = 'tok_decline';
+const PROVIDER_ERROR_TOKEN = 'tok_provider_error';
 
 /**
  * In-memory provider for local development and tests.
@@ -22,6 +25,10 @@ class FakePaymentProvider extends PaymentProvider {
 
   async authorize({ paymentMethodToken, idempotencyKey }) {
     return this.#once(idempotencyKey, () => {
+      if (paymentMethodToken === PROVIDER_ERROR_TOKEN) {
+        // Like a timeout: nothing is stored, so a retry with the same key runs again.
+        throw new ProviderUnavailableError('Fake provider error (tok_provider_error)');
+      }
       const reference = this.#newReference('ch');
       if (paymentMethodToken === DECLINE_TOKEN) {
         return this.#toProviderResult('charge', 'declined', reference, 'card_declined');
@@ -75,4 +82,4 @@ class FakePaymentProvider extends PaymentProvider {
   }
 }
 
-module.exports = { FakePaymentProvider, DECLINE_TOKEN };
+module.exports = { FakePaymentProvider, DECLINE_TOKEN, PROVIDER_ERROR_TOKEN };

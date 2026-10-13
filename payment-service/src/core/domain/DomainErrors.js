@@ -20,4 +20,38 @@ class InvalidPaymentTransitionError extends DomainError {
   }
 }
 
-module.exports = { DomainError, InvalidMoneyError, InvalidPaymentTransitionError };
+class PaymentNotFoundError extends DomainError {
+  constructor() {
+    super('Payment not found', 'PAYMENT_NOT_FOUND');
+  }
+}
+
+class PaymentAlreadyExistsError extends DomainError {
+  constructor(sessionId) {
+    super(`Session ${sessionId} already has an active payment`, 'PAYMENT_ALREADY_EXISTS');
+    this.sessionId = sessionId;
+  }
+}
+
+class PaymentAccessDeniedError extends DomainError {
+  constructor() {
+    super('The payment belongs to another user', 'PAYMENT_ACCESS_DENIED');
+  }
+}
+
+// Thrown by provider adapters on timeouts, network errors or provider 5xx.
+class ProviderUnavailableError extends DomainError {
+  constructor(message = 'The payment provider is unavailable') {
+    super(message, 'PROVIDER_UNAVAILABLE');
+  }
+}
+
+module.exports = {
+  DomainError,
+  InvalidMoneyError,
+  InvalidPaymentTransitionError,
+  PaymentNotFoundError,
+  PaymentAlreadyExistsError,
+  PaymentAccessDeniedError,
+  ProviderUnavailableError,
+};
