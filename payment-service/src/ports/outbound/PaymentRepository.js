@@ -7,7 +7,8 @@ class PaymentRepository {
     ensurePortImplementation(this, PaymentRepository);
   }
 
-  // Inserts or updates the payment; resolves to the persisted Payment (with id and timestamps).
+  // Inserts or updates the payment together with its new transactions (those without
+  // an id), atomically; resolves to the persisted Payment (with ids and timestamps).
   async save(payment) {
     throw new NotImplementedError('PaymentRepository.save');
   }
@@ -17,7 +18,7 @@ class PaymentRepository {
     throw new NotImplementedError('PaymentRepository.findById');
   }
 
-  // Resolves to the Payment of that Session, or null.
+  // Resolves to the most recent Payment of that Session, or null.
   async findBySessionId(sessionId) {
     throw new NotImplementedError('PaymentRepository.findBySessionId');
   }

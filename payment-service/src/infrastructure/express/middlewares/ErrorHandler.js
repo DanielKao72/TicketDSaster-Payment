@@ -2,14 +2,26 @@ const {
   DomainError,
   InvalidMoneyError,
   InvalidPaymentTransitionError,
+  PaymentNotFoundError,
+  PaymentAlreadyExistsError,
+  PaymentAccessDeniedError,
+  ProviderUnavailableError,
 } = require('../../../core/domain/DomainErrors');
+const { HttpError } = require('../HttpError');
 
 const STATUS_BY_ERROR = new Map([
   [InvalidMoneyError, 400],
+  [PaymentAccessDeniedError, 403],
+  [PaymentNotFoundError, 404],
   [InvalidPaymentTransitionError, 409],
+  [PaymentAlreadyExistsError, 409],
+  [ProviderUnavailableError, 502],
 ]);
 
 function statusFor(err) {
+  if (err instanceof HttpError) return err.status;
+  // express.json() errors (malformed JSON, body too large) carry their own 4xx status.
+  if (err.type && Number.isInteger(err.status) && err.status < 500) return err.status;
   for (const [ErrorType, status] of STATUS_BY_ERROR) {
     if (err instanceof ErrorType) return status;
   }
@@ -28,7 +40,7 @@ function errorHandler(err, req, res, next) {
     return;
   }
 
-  const code = err instanceof DomainError ? err.code : 'ERROR';
+  const code = err instanceof DomainError || err instanceof HttpError ? err.code : 'BAD_REQUEST';
   res.status(status).json({ error: { code, message: err.message } });
 }
 

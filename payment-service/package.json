@@ -10,6 +10,7 @@
     "lint": "eslint . && prettier --check .",
     "format": "prettier --write .",
     "openapi": "node scripts/generate-openapi.js",
+    "token": "node scripts/sign-dev-token.js",
     "db:migrate": "knex migrate:latest",
     "db:rollback": "knex migrate:rollback",
     "db:seed": "knex seed:run",
@@ -20,9 +21,11 @@
   },
   "dependencies": {
     "express": "^4.22.3",
+    "jsonwebtoken": "^9.0.3",
     "knex": "^3.3.0",
     "pg": "^8.23.1",
-    "swagger-jsdoc": "^6.3.0"
+    "swagger-jsdoc": "^6.3.0",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@commitlint/cli": "^19.8.1",

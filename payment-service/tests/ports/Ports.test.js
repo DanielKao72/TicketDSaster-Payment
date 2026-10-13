@@ -27,19 +27,25 @@ test('an adapter missing port methods fails when it is created', () => {
 });
 
 test('a complete adapter can be created and is an instance of its port', () => {
-  class InMemoryIdempotencyStore extends IdempotencyStore {
+  class MapIdempotencyStore extends IdempotencyStore {
     #records = new Map();
 
-    async find(key) {
-      return this.#records.get(key) ?? null;
+    async claim({ key, requestHash }) {
+      if (this.#records.has(key)) return this.#records.get(key);
+      this.#records.set(key, { key, requestHash });
+      return null;
     }
 
-    async save(record) {
-      this.#records.set(record.key, record);
+    async complete(key, response) {
+      Object.assign(this.#records.get(key), response);
+    }
+
+    async release(key) {
+      this.#records.delete(key);
     }
   }
 
-  const store = new InMemoryIdempotencyStore();
+  const store = new MapIdempotencyStore();
 
   assert.ok(store instanceof IdempotencyStore);
 });

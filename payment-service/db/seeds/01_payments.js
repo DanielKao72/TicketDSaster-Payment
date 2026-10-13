@@ -35,6 +35,7 @@ exports.seed = async function seed(knex) {
       session_id: `aaaaaaaa-aaaa-4aaa-8aaa-00000000000${index + 1}`,
       user_id: USER_ID,
       currency: 'MXN',
+      decline_reason: payment.status === 'FAILED' ? 'card_declined' : null,
     })),
   );
 

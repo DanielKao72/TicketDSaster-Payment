@@ -4,8 +4,10 @@ const crypto = require('node:crypto');
 const {
   FakePaymentProvider,
   DECLINE_TOKEN,
+  PROVIDER_ERROR_TOKEN,
 } = require('../../../src/adapters/providers/FakePaymentProvider');
 const { PaymentProvider } = require('../../../src/ports/outbound/PaymentProvider');
+const { ProviderUnavailableError } = require('../../../src/core/domain/DomainErrors');
 
 const AUTHORIZE_REQUEST = {
   paymentId: 'payment-1',
@@ -80,4 +82,12 @@ test('verifyWebhookSignature accepts only the HMAC of the body', () => {
   assert.strictEqual(provider.verifyWebhookSignature(body, signature), true);
   assert.strictEqual(provider.verifyWebhookSignature(body, 'bad'), false);
   assert.strictEqual(provider.verifyWebhookSignature(body, undefined), false);
+});
+
+test('the provider error token throws ProviderUnavailableError without storing the result', async () => {
+  const provider = new FakePaymentProvider();
+  const request = { ...AUTHORIZE_REQUEST, paymentMethodToken: PROVIDER_ERROR_TOKEN };
+
+  await assert.rejects(provider.authorize(request), ProviderUnavailableError);
+  await assert.rejects(provider.authorize(request), ProviderUnavailableError);
 });

@@ -4,7 +4,7 @@ This file provides guidance to AI coding agents when working with code in this r
 
 ## Overview
 
-Payment Service for the Ticket D-Saster platform (Node.js 20 + Express, CommonJS, PostgreSQL via knex). The service code and its `package.json` live in `payment-service/`. Design docs are in `docs/`, release scripts in `scripts/`, and CI workflows in `.github/workflows/`. Only `GET /health` exists so far.
+Payment Service for the Ticket D-Saster platform (Node.js 20 + Express, CommonJS, PostgreSQL via knex). The service code and its `package.json` live in `payment-service/`. Design docs are in `docs/`, release scripts in `scripts/`, and CI workflows in `.github/workflows/`. The payment endpoints (`/payments`, capture, refund) run against a mocked provider (`FakePaymentProvider`); the provider webhook is not implemented yet.
 
 ## Commands
 
@@ -19,6 +19,7 @@ npm test                                   # node --test (built-in runner, disco
 node --test tests/Health.test.js           # single test file
 node --test --test-name-pattern="health"   # tests matching a name
 npm run openapi                            # writes openapi.json (APP_VERSION overrides info.version)
+npm run token -- --sub <uuid> --role Fan   # signs a dev JWT with JWT_SECRET
 npm run db:migrate | db:rollback | db:seed # knex, needs DATABASE_URL
 docker compose up --build                  # Postgres + migrations/seeds + service (cp .env.example .env first)
 ```
@@ -41,7 +42,7 @@ Rules:
 - **Entrypoint:** `src/index.js` is the composition root. It is the only file that creates adapters, injects them into `buildApp(deps)` (`infrastructure/express/App.js`) and calls `listen()`.
 - **Tests:** they call `buildApp().listen(0)` on an ephemeral port and hit it with global `fetch`. Use-case tests inject fakes instead of mocking modules (`FakePaymentProvider` in `adapters/providers/FakePaymentProvider.js` is the provider fake).
 - **Naming:** files use UpperCamelCase and are named after what they export (`Payment.js`, `PaymentRepository.js`, `HealthController.js`, `HealthRoutes.js`). Tests keep the `.test.js` suffix (`Payment.test.js`). The exceptions are `index.js`, tool config files (`eslint.config.js`, `knexfile.js`) and knex migrations and seeds. Folders stay kebab-case (`use-cases/`). The port and its adapters are told apart by folder (`ports/outbound/PaymentRepository.js` vs `adapters/repositories/PostgresPaymentRepository.js`).
-- **Config:** all env access goes through `src/infrastructure/config/index.js` (`port`, `appVersion`, `database.url`). Don't read `process.env` anywhere else.
+- **Config:** all env access goes through `src/infrastructure/config/index.js` (`port`, `appVersion`, `database.url`, `paymentStore`, `jwt.secret`). Don't read `process.env` anywhere else.
 - **OpenAPI is generated from code.** Every route needs an `@openapi` JSDoc block in `src/infrastructure/express/routes/*.js`, which `src/infrastructure/express/OpenApi.js` (swagger-jsdoc) collects. `tests/OpenApi.test.js` checks the spec.
 - **Payment Store schema** is in `db/migrations/` (`payments`, `transactions`, `idempotency_keys`, with native Postgres enums for statuses). `db/seeds/` holds dummy data with one payment per status. Change the schema with a new migration; never edit an applied one.
 
