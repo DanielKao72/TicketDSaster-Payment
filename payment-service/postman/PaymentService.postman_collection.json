@@ -1,0 +1,2724 @@
+{
+  "info": {
+    "name": "Ticket D-Saster · Payment Service",
+    "description": "Suite de pruebas de los endpoints y casos de uso del Payment Service con el proveedor mock. Ejecuta la colección completa en orden (Collection Runner o newman). Documentación: payment-service/postman/README.md",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{fanToken}}",
+        "type": "string"
+      }
+    ]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Firma JWT HS256 como lo haría el Auth Service, con el secreto del environment.",
+          "// Regenera los tokens antes de cada request para que nunca expiren a mitad de la corrida.",
+          "(() => {",
+          "const cryptoJs = require('crypto-js');",
+          "",
+          "function base64url(wordArray) {",
+          "  return cryptoJs.enc.Base64.stringify(wordArray).replace(/=+$/, '').replace(/\\+/g, '-').replace(/\\//g, '_');",
+          "}",
+          "",
+          "function signJwt(payload, secret) {",
+          "  const header = base64url(cryptoJs.enc.Utf8.parse(JSON.stringify({ alg: 'HS256', typ: 'JWT' })));",
+          "  const body = base64url(cryptoJs.enc.Utf8.parse(JSON.stringify(payload)));",
+          "  const signature = base64url(cryptoJs.HmacSHA256(header + '.' + body, secret));",
+          "  return header + '.' + body + '.' + signature;",
+          "}",
+          "",
+          "const secret = pm.environment.get('jwtSecret');",
+          "const now = Math.floor(Date.now() / 1000);",
+          "const claims = (sub, role, exp = now + 3600) => ({ sub, role, iat: now, exp });",
+          "const fan = pm.environment.get('fanUserId');",
+          "const otherFan = pm.environment.get('otherFanUserId');",
+          "",
+          "pm.collectionVariables.set('fanToken', signJwt(claims(fan, 'Fan'), secret));",
+          "pm.collectionVariables.set('otherFanToken', signJwt(claims(otherFan, 'Fan'), secret));",
+          "pm.collectionVariables.set('organizerToken', signJwt(claims(fan, 'Organizer'), secret));",
+          "pm.collectionVariables.set('expiredToken', signJwt(claims(fan, 'Fan', now - 60), secret));",
+          "pm.collectionVariables.set('wrongSecretToken', signJwt(claims(fan, 'Fan'), 'not-the-secret'));",
+          "})();"
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "pm.test('La respuesta es JSON', () => {",
+          "  pm.response.to.have.header('Content-Type');",
+          "  pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json');",
+          "});"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "runId",
+      "value": ""
+    },
+    {
+      "key": "paymentId",
+      "value": ""
+    },
+    {
+      "key": "declinedPaymentId",
+      "value": ""
+    },
+    {
+      "key": "retryPaymentId",
+      "value": ""
+    },
+    {
+      "key": "sessionHappy",
+      "value": ""
+    },
+    {
+      "key": "sessionDecline",
+      "value": ""
+    },
+    {
+      "key": "sessionOutage",
+      "value": ""
+    },
+    {
+      "key": "sessionValidation",
+      "value": ""
+    },
+    {
+      "key": "sessionEmpty",
+      "value": ""
+    },
+    {
+      "key": "fanToken",
+      "value": ""
+    },
+    {
+      "key": "otherFanToken",
+      "value": ""
+    },
+    {
+      "key": "organizerToken",
+      "value": ""
+    },
+    {
+      "key": "expiredToken",
+      "value": ""
+    },
+    {
+      "key": "wrongSecretToken",
+      "value": ""
+    },
+    {
+      "key": "malformedToken",
+      "value": "not-a-jwt"
+    }
+  ],
+  "item": [
+    {
+      "name": "00 · Preparación",
+      "description": "Comprueba que el servicio responde y genera los datos únicos de la corrida (runId y sessionIds). Debe ejecutarse primero.",
+      "item": [
+        {
+          "name": "Health check",
+          "request": {
+            "description": "GET /health. No requiere token. Inicializa runId y los sessionId de la corrida.",
+            "method": "GET",
+            "auth": {
+              "type": "noauth"
+            },
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["health"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "",
+                  "pm.test('El servicio está arriba', () => pm.expect(pm.response.json()).to.eql({ status: 'ok' }));",
+                  "",
+                  "// Datos únicos por corrida: la suite se puede ejecutar muchas veces sin chocar",
+                  "// con sesiones o llaves de corridas anteriores.",
+                  "pm.collectionVariables.set('runId', 'pm-' + Date.now());",
+                  "['sessionHappy', 'sessionDecline', 'sessionOutage', 'sessionValidation', 'sessionEmpty'].forEach((name) => {",
+                  "  pm.collectionVariables.set(name, pm.variables.replaceIn('{{$guid}}'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "01 · Flujo feliz: crear → capturar → reembolsar",
+      "description": "Caso de uso completo de Booking: autoriza el pago de una sesión, lo captura cuando se confirman los asientos y lo reembolsa. Incluye reintentos idempotentes.",
+      "item": [
+        {
+          "name": "Crear pago (autorizar)",
+          "request": {
+            "description": "CreatePaymentUseCase. El proveedor mock autoriza cualquier token que no sea de prueba. Guarda paymentId.",
+            "method": "POST",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{fanToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{runId}}-happy-create"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{sessionHappy}}\",\n  \"amount\": 150000,\n  \"currency\": \"MXN\",\n  \"paymentMethodToken\": \"tok_visa\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 201', () => pm.response.to.have.status(201));",
+                  "",
+                  "",
+                  "pm.test('El cuerpo tiene la forma de un Payment', () => {",
+                  "  const p = pm.response.json();",
+                  "  pm.expect(p).to.include.keys('id', 'sessionId', 'userId', 'amount', 'currency', 'status', 'createdAt', 'updatedAt');",
+                  "  pm.expect(p.amount).to.be.a('number');",
+                  "  pm.expect(Number.isInteger(p.amount), 'amount en centavos (entero)').to.be.true;",
+                  "});",
+                  "",
+                  "",
+                  "pm.test('Status del pago = AUTHORIZED', () => pm.expect(pm.response.json().status).to.eql('AUTHORIZED'));",
+                  "",
+                  "",
+                  "pm.test('userId viene del token (sub), no del body', () => {",
+                  "  pm.expect(pm.response.json().userId).to.eql(pm.environment.get('fanUserId'));",
+                  "});",
+                  "pm.test('Sin declineReason', () => pm.expect(pm.response.json()).to.not.have.property('declineReason'));",
+                  "pm.test('No es una respuesta repetida', () => pm.expect(pm.response.headers.get('Idempotent-Replayed')).to.be.undefined);",
+                  "",
+                  "",
+                  "pm.collectionVariables.set('paymentId', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reintento con la misma Idempotency-Key",
+          "request": {
+            "description": "Misma llave y mismo body: devuelve la respuesta guardada sin volver a cobrar.",
+            "method": "POST",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{fanToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{runId}}-happy-create"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{sessionHappy}}\",\n  \"amount\": 150000,\n  \"currency\": \"MXN\",\n  \"paymentMethodToken\": \"tok_visa\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 201', () => pm.response.to.have.status(201));",
+                  "",
+                  "",
+                  "pm.test('Es una respuesta repetida (Idempotent-Replayed: true)', () => {",
+                  "  pm.expect(pm.response.headers.get('Idempotent-Replayed')).to.eql('true');",
+                  "});",
+                  "",
+                  "",
+                  "pm.test('Es el mismo pago (paymentId)', () => {",
+                  "  pm.expect(pm.response.json().id).to.eql(pm.collectionVariables.get('paymentId'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reintento con los campos en otro orden",
+          "request": {
+            "description": "El hash de la petición es canónico: el orden de las propiedades JSON no importa.",
+            "method": "POST",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{fanToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{runId}}-happy-create"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"paymentMethodToken\": \"tok_visa\",\n  \"currency\": \"MXN\",\n  \"amount\": 150000,\n  \"sessionId\": \"{{sessionHappy}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 201', () => pm.response.to.have.status(201));",
+                  "",
+                  "",
+                  "pm.test('Es una respuesta repetida (Idempotent-Replayed: true)', () => {",
+                  "  pm.expect(pm.response.headers.get('Idempotent-Replayed')).to.eql('true');",
+                  "});",
+                  "",
+                  "",
+                  "pm.test('Es el mismo pago (paymentId)', () => {",
+                  "  pm.expect(pm.response.json().id).to.eql(pm.collectionVariables.get('paymentId'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Consultar pago por id",
+          "request": {
+            "description": "GetPaymentUseCase por id.",
+            "method": "GET",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{fanToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/payments/{{paymentId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments", "{{paymentId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "",
+                  "",
+                  "pm.test('El cuerpo tiene la forma de un Payment', () => {",
+                  "  const p = pm.response.json();",
+                  "  pm.expect(p).to.include.keys('id', 'sessionId', 'userId', 'amount', 'currency', 'status', 'createdAt', 'updatedAt');",
+                  "  pm.expect(p.amount).to.be.a('number');",
+                  "  pm.expect(Number.isInteger(p.amount), 'amount en centavos (entero)').to.be.true;",
+                  "});",
+                  "",
+                  "",
+                  "pm.test('Status del pago = AUTHORIZED', () => pm.expect(pm.response.json().status).to.eql('AUTHORIZED'));",
+                  "",
+                  "",
+                  "pm.test('Es el mismo pago (paymentId)', () => {",
+                  "  pm.expect(pm.response.json().id).to.eql(pm.collectionVariables.get('paymentId'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Consultar pago por sesión",
+          "request": {
+            "description": "GetPaymentUseCase por sessionId: devuelve el pago más reciente de la sesión.",
+            "method": "GET",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{fanToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/payments?sessionId={{sessionHappy}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments"],
+              "query": [
+                {
+                  "key": "sessionId",
+                  "value": "{{sessionHappy}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "",
+                  "",
+                  "pm.test('Es el mismo pago (paymentId)', () => {",
+                  "  pm.expect(pm.response.json().id).to.eql(pm.collectionVariables.get('paymentId'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Capturar pago",
+          "request": {
+            "description": "CapturePaymentUseCase. Booking confirma los asientos y cobra lo autorizado.",
+            "method": "POST",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{fanToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{runId}}-happy-capture"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments/{{paymentId}}/capture",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments", "{{paymentId}}", "capture"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "",
+                  "",
+                  "pm.test('El cuerpo tiene la forma de un Payment', () => {",
+                  "  const p = pm.response.json();",
+                  "  pm.expect(p).to.include.keys('id', 'sessionId', 'userId', 'amount', 'currency', 'status', 'createdAt', 'updatedAt');",
+                  "  pm.expect(p.amount).to.be.a('number');",
+                  "  pm.expect(Number.isInteger(p.amount), 'amount en centavos (entero)').to.be.true;",
+                  "});",
+                  "",
+                  "",
+                  "pm.test('Status del pago = CAPTURED', () => pm.expect(pm.response.json().status).to.eql('CAPTURED'));",
+                  "",
+                  "",
+                  "pm.test('Es el mismo pago (paymentId)', () => {",
+                  "  pm.expect(pm.response.json().id).to.eql(pm.collectionVariables.get('paymentId'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reintento de captura con la misma llave",
+          "request": {
+            "description": "La captura también es idempotente: devuelve la respuesta guardada.",
+            "method": "POST",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{fanToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{runId}}-happy-capture"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments/{{paymentId}}/capture",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments", "{{paymentId}}", "capture"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "",
+                  "",
+                  "pm.test('Es una respuesta repetida (Idempotent-Replayed: true)', () => {",
+                  "  pm.expect(pm.response.headers.get('Idempotent-Replayed')).to.eql('true');",
+                  "});",
+                  "",
+                  "",
+                  "pm.test('Status del pago = CAPTURED', () => pm.expect(pm.response.json().status).to.eql('CAPTURED'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Capturar otra vez con otra llave",
+          "request": {
+            "description": "CAPTURED → CAPTURED no es una transición válida.",
+            "method": "POST",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{fanToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{runId}}-happy-capture-2"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments/{{paymentId}}/capture",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments", "{{paymentId}}", "capture"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 409', () => pm.response.to.have.status(409));",
+                  "",
+                  "",
+                  "pm.test('Código de error INVALID_PAYMENT_TRANSITION', () => {",
+                  "  pm.expect(pm.response.json().error.code).to.eql('INVALID_PAYMENT_TRANSITION');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reembolsar pago",
+          "request": {
+            "description": "RefundPaymentUseCase. Reembolso total de un pago capturado.",
+            "method": "POST",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{fanToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{runId}}-happy-refund"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments/{{paymentId}}/refund",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments", "{{paymentId}}", "refund"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "",
+                  "",
+                  "pm.test('Status del pago = REFUNDED', () => pm.expect(pm.response.json().status).to.eql('REFUNDED'));",
+                  "",
+                  "",
+                  "pm.test('Es el mismo pago (paymentId)', () => {",
+                  "  pm.expect(pm.response.json().id).to.eql(pm.collectionVariables.get('paymentId'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reembolsar otra vez con otra llave",
+          "request": {
+            "description": "REFUNDED es terminal.",
+            "method": "POST",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{fanToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{runId}}-happy-refund-2"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments/{{paymentId}}/refund",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments", "{{paymentId}}", "refund"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 409', () => pm.response.to.have.status(409));",
+                  "",
+                  "",
+                  "pm.test('Código de error INVALID_PAYMENT_TRANSITION', () => {",
+                  "  pm.expect(pm.response.json().error.code).to.eql('INVALID_PAYMENT_TRANSITION');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Consultar estado final",
+          "request": {
+            "method": "GET",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{fanToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/payments/{{paymentId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments", "{{paymentId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "",
+                  "",
+                  "pm.test('Status del pago = REFUNDED', () => pm.expect(pm.response.json().status).to.eql('REFUNDED'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "02 · Pago declinado y reintento",
+      "description": "El proveedor declina el token tok_decline. Un rechazo no es un error del servicio: el pago queda FAILED (422) y la sesión puede volver a intentarlo.",
+      "item": [
+        {
+          "name": "Crear pago con tarjeta declinada",
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{fanToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{runId}}-decline-create"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{sessionDecline}}\",\n  \"amount\": 150000,\n  \"currency\": \"MXN\",\n  \"paymentMethodToken\": \"tok_decline\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 422', () => pm.response.to.have.status(422));",
+                  "",
+                  "",
+                  "pm.test('El cuerpo tiene la forma de un Payment', () => {",
+                  "  const p = pm.response.json();",
+                  "  pm.expect(p).to.include.keys('id', 'sessionId', 'userId', 'amount', 'currency', 'status', 'createdAt', 'updatedAt');",
+                  "  pm.expect(p.amount).to.be.a('number');",
+                  "  pm.expect(Number.isInteger(p.amount), 'amount en centavos (entero)').to.be.true;",
+                  "});",
+                  "",
+                  "",
+                  "pm.test('Status del pago = FAILED', () => pm.expect(pm.response.json().status).to.eql('FAILED'));",
+                  "",
+                  "",
+                  "pm.test('declineReason = card_declined', () => pm.expect(pm.response.json().declineReason).to.eql('card_declined'));",
+                  "",
+                  "",
+                  "pm.collectionVariables.set('declinedPaymentId', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reintento del rechazo con la misma llave",
+          "request": {
+            "description": "Las respuestas 4xx también se guardan: el reintento devuelve el mismo 422.",
+            "method": "POST",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{fanToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{runId}}-decline-create"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{sessionDecline}}\",\n  \"amount\": 150000,\n  \"currency\": \"MXN\",\n  \"paymentMethodToken\": \"tok_decline\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 422', () => pm.response.to.have.status(422));",
+                  "",
+                  "",
+                  "pm.test('Es una respuesta repetida (Idempotent-Replayed: true)', () => {",
+                  "  pm.expect(pm.response.headers.get('Idempotent-Replayed')).to.eql('true');",
+                  "});",
+                  "",
+                  "",
+                  "pm.test('Es el mismo pago (declinedPaymentId)', () => {",
+                  "  pm.expect(pm.response.json().id).to.eql(pm.collectionVariables.get('declinedPaymentId'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Capturar un pago FAILED",
+          "request": {
+            "description": "FAILED es terminal: no se llama al proveedor.",
+            "method": "POST",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{fanToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{runId}}-decline-capture"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments/{{declinedPaymentId}}/capture",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments", "{{declinedPaymentId}}", "capture"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 409', () => pm.response.to.have.status(409));",
+                  "",
+                  "",
+                  "pm.test('Código de error INVALID_PAYMENT_TRANSITION', () => {",
+                  "  pm.expect(pm.response.json().error.code).to.eql('INVALID_PAYMENT_TRANSITION');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Nuevo intento para la misma sesión con otra tarjeta",
+          "request": {
+            "description": "Si el pago anterior de la sesión está FAILED, se permite crear otro.",
+            "method": "POST",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{fanToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{runId}}-decline-retry"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{sessionDecline}}\",\n  \"amount\": 150000,\n  \"currency\": \"MXN\",\n  \"paymentMethodToken\": \"tok_visa\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 201', () => pm.response.to.have.status(201));",
+                  "",
+                  "",
+                  "pm.test('Status del pago = AUTHORIZED', () => pm.expect(pm.response.json().status).to.eql('AUTHORIZED'));",
+                  "",
+                  "",
+                  "pm.test('Es un pago nuevo', () => {",
+                  "  pm.expect(pm.response.json().id).to.not.eql(pm.collectionVariables.get('declinedPaymentId'));",
+                  "});",
+                  "",
+                  "",
+                  "pm.collectionVariables.set('retryPaymentId', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Consultar por sesión devuelve el intento más reciente",
+          "request": {
+            "method": "GET",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{fanToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/payments?sessionId={{sessionDecline}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments"],
+              "query": [
+                {
+                  "key": "sessionId",
+                  "value": "{{sessionDecline}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "",
+                  "",
+                  "pm.test('Es el mismo pago (retryPaymentId)', () => {",
+                  "  pm.expect(pm.response.json().id).to.eql(pm.collectionVariables.get('retryPaymentId'));",
+                  "});",
+                  "",
+                  "",
+                  "pm.test('Status del pago = AUTHORIZED', () => pm.expect(pm.response.json().status).to.eql('AUTHORIZED'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "03 · Reglas de negocio",
+      "description": "Una sesión solo puede tener un pago activo y solo se reembolsa lo capturado.",
+      "item": [
+        {
+          "name": "Segundo pago para una sesión con pago activo",
+          "request": {
+            "description": "sessionDecline ya tiene un pago AUTHORIZED.",
+            "method": "POST",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{fanToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{runId}}-rules-duplicate"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{sessionDecline}}\",\n  \"amount\": 150000,\n  \"currency\": \"MXN\",\n  \"paymentMethodToken\": \"tok_visa\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 409', () => pm.response.to.have.status(409));",
+                  "",
+                  "",
+                  "pm.test('Código de error PAYMENT_ALREADY_EXISTS', () => {",
+                  "  pm.expect(pm.response.json().error.code).to.eql('PAYMENT_ALREADY_EXISTS');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reembolsar un pago AUTHORIZED (sin capturar)",
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{fanToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{runId}}-rules-refund-authorized"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments/{{retryPaymentId}}/refund",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments", "{{retryPaymentId}}", "refund"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 409', () => pm.response.to.have.status(409));",
+                  "",
+                  "",
+                  "pm.test('Código de error INVALID_PAYMENT_TRANSITION', () => {",
+                  "  pm.expect(pm.response.json().error.code).to.eql('INVALID_PAYMENT_TRANSITION');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "04 · Idempotencia",
+      "description": "Reglas del header Idempotency-Key en los POST.",
+      "item": [
+        {
+          "name": "Misma llave con otro body",
+          "request": {
+            "description": "Reusa la llave del flujo feliz cambiando el monto.",
+            "method": "POST",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{fanToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{runId}}-happy-create"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{sessionHappy}}\",\n  \"amount\": 999,\n  \"currency\": \"MXN\",\n  \"paymentMethodToken\": \"tok_visa\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 409', () => pm.response.to.have.status(409));",
+                  "",
+                  "",
+                  "pm.test('Código de error IDEMPOTENCY_KEY_MISMATCH', () => {",
+                  "  pm.expect(pm.response.json().error.code).to.eql('IDEMPOTENCY_KEY_MISMATCH');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Misma llave y body desde otro usuario",
+          "request": {
+            "description": "El usuario es parte del hash: nadie puede ver la respuesta de otro reusando su llave.",
+            "method": "POST",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{otherFanToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{runId}}-happy-create"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{sessionHappy}}\",\n  \"amount\": 150000,\n  \"currency\": \"MXN\",\n  \"paymentMethodToken\": \"tok_visa\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 409', () => pm.response.to.have.status(409));",
+                  "",
+                  "",
+                  "pm.test('Código de error IDEMPOTENCY_KEY_MISMATCH', () => {",
+                  "  pm.expect(pm.response.json().error.code).to.eql('IDEMPOTENCY_KEY_MISMATCH');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST sin Idempotency-Key",
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{fanToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{sessionValidation}}\",\n  \"amount\": 150000,\n  \"currency\": \"MXN\",\n  \"paymentMethodToken\": \"tok_visa\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 400', () => pm.response.to.have.status(400));",
+                  "",
+                  "",
+                  "pm.test('Código de error IDEMPOTENCY_KEY_REQUIRED', () => {",
+                  "  pm.expect(pm.response.json().error.code).to.eql('IDEMPOTENCY_KEY_REQUIRED');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Idempotency-Key de más de 255 caracteres",
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{fanToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{longKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{sessionValidation}}\",\n  \"amount\": 150000,\n  \"currency\": \"MXN\",\n  \"paymentMethodToken\": \"tok_visa\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.variables.set('longKey', 'k'.repeat(256));"]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 400', () => pm.response.to.have.status(400));",
+                  "",
+                  "",
+                  "pm.test('Código de error IDEMPOTENCY_KEY_REQUIRED', () => {",
+                  "  pm.expect(pm.response.json().error.code).to.eql('IDEMPOTENCY_KEY_REQUIRED');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "05 · Validación de entrada (400)",
+      "description": "El body se valida con zod antes de llegar al caso de uso. Ningún caso crea un pago.",
+      "item": [
+        {
+          "name": "amount con decimales",
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{fanToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{runId}}-validation-0"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{sessionValidation}}\",\n  \"amount\": 10.5,\n  \"currency\": \"MXN\",\n  \"paymentMethodToken\": \"tok_visa\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 400', () => pm.response.to.have.status(400));",
+                  "",
+                  "",
+                  "pm.test('Código de error VALIDATION_ERROR', () => {",
+                  "  pm.expect(pm.response.json().error.code).to.eql('VALIDATION_ERROR');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "amount en cero",
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{fanToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{runId}}-validation-1"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{sessionValidation}}\",\n  \"amount\": 0,\n  \"currency\": \"MXN\",\n  \"paymentMethodToken\": \"tok_visa\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 400', () => pm.response.to.have.status(400));",
+                  "",
+                  "",
+                  "pm.test('Código de error VALIDATION_ERROR', () => {",
+                  "  pm.expect(pm.response.json().error.code).to.eql('VALIDATION_ERROR');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "amount negativo",
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{fanToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{runId}}-validation-2"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{sessionValidation}}\",\n  \"amount\": -100,\n  \"currency\": \"MXN\",\n  \"paymentMethodToken\": \"tok_visa\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 400', () => pm.response.to.have.status(400));",
+                  "",
+                  "",
+                  "pm.test('Código de error VALIDATION_ERROR', () => {",
+                  "  pm.expect(pm.response.json().error.code).to.eql('VALIDATION_ERROR');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "amount como string",
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{fanToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{runId}}-validation-3"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{sessionValidation}}\",\n  \"amount\": \"150000\",\n  \"currency\": \"MXN\",\n  \"paymentMethodToken\": \"tok_visa\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 400', () => pm.response.to.have.status(400));",
+                  "",
+                  "",
+                  "pm.test('Código de error VALIDATION_ERROR', () => {",
+                  "  pm.expect(pm.response.json().error.code).to.eql('VALIDATION_ERROR');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "currency en minúsculas",
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{fanToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{runId}}-validation-4"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{sessionValidation}}\",\n  \"amount\": 150000,\n  \"currency\": \"mxn\",\n  \"paymentMethodToken\": \"tok_visa\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 400', () => pm.response.to.have.status(400));",
+                  "",
+                  "",
+                  "pm.test('Código de error VALIDATION_ERROR', () => {",
+                  "  pm.expect(pm.response.json().error.code).to.eql('VALIDATION_ERROR');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "currency de 4 letras",
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{fanToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{runId}}-validation-5"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{sessionValidation}}\",\n  \"amount\": 150000,\n  \"currency\": \"MXNN\",\n  \"paymentMethodToken\": \"tok_visa\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 400', () => pm.response.to.have.status(400));",
+                  "",
+                  "",
+                  "pm.test('Código de error VALIDATION_ERROR', () => {",
+                  "  pm.expect(pm.response.json().error.code).to.eql('VALIDATION_ERROR');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "sessionId que no es uuid",
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{fanToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{runId}}-validation-6"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"not-a-uuid\",\n  \"amount\": 150000,\n  \"currency\": \"MXN\",\n  \"paymentMethodToken\": \"tok_visa\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 400', () => pm.response.to.have.status(400));",
+                  "",
+                  "",
+                  "pm.test('Código de error VALIDATION_ERROR', () => {",
+                  "  pm.expect(pm.response.json().error.code).to.eql('VALIDATION_ERROR');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "paymentMethodToken vacío",
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{fanToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{runId}}-validation-7"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{sessionValidation}}\",\n  \"amount\": 150000,\n  \"currency\": \"MXN\",\n  \"paymentMethodToken\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 400', () => pm.response.to.have.status(400));",
+                  "",
+                  "",
+                  "pm.test('Código de error VALIDATION_ERROR', () => {",
+                  "  pm.expect(pm.response.json().error.code).to.eql('VALIDATION_ERROR');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Campo desconocido (datos de tarjeta)",
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{fanToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{runId}}-validation-8"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{sessionValidation}}\",\n  \"amount\": 150000,\n  \"currency\": \"MXN\",\n  \"paymentMethodToken\": \"tok_visa\",\n  \"cardNumber\": \"4242424242424242\",\n  \"cvv\": \"123\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 400', () => pm.response.to.have.status(400));",
+                  "",
+                  "",
+                  "pm.test('Código de error VALIDATION_ERROR', () => {",
+                  "  pm.expect(pm.response.json().error.code).to.eql('VALIDATION_ERROR');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Faltan campos obligatorios",
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{fanToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{runId}}-validation-missing"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{sessionValidation}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 400', () => pm.response.to.have.status(400));",
+                  "",
+                  "",
+                  "pm.test('Código de error VALIDATION_ERROR', () => {",
+                  "  pm.expect(pm.response.json().error.code).to.eql('VALIDATION_ERROR');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "JSON malformado",
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{fanToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{runId}}-validation-malformed"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"sessionId\": \"{{sessionValidation}}\", \"amount\": ",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Responde 400', () => pm.response.to.have.status(400));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "paymentId que no es uuid",
+          "request": {
+            "method": "GET",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{fanToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/payments/abc",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments", "abc"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 400', () => pm.response.to.have.status(400));",
+                  "",
+                  "",
+                  "pm.test('Código de error VALIDATION_ERROR', () => {",
+                  "  pm.expect(pm.response.json().error.code).to.eql('VALIDATION_ERROR');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Consultar por sesión sin sessionId",
+          "request": {
+            "method": "GET",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{fanToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/payments",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 400', () => pm.response.to.have.status(400));",
+                  "",
+                  "",
+                  "pm.test('Código de error VALIDATION_ERROR', () => {",
+                  "  pm.expect(pm.response.json().error.code).to.eql('VALIDATION_ERROR');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ningún intento inválido creó un pago",
+          "request": {
+            "method": "GET",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{fanToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/payments?sessionId={{sessionValidation}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments"],
+              "query": [
+                {
+                  "key": "sessionId",
+                  "value": "{{sessionValidation}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 404', () => pm.response.to.have.status(404));",
+                  "",
+                  "",
+                  "pm.test('Código de error PAYMENT_NOT_FOUND', () => {",
+                  "  pm.expect(pm.response.json().error.code).to.eql('PAYMENT_NOT_FOUND');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "06 · Autenticación y autorización",
+      "description": "JWT HS256 emitido por el Auth Service (aquí lo firma el pre-request de la colección). Solo el rol Fan opera pagos y solo sobre los suyos.",
+      "item": [
+        {
+          "name": "Sin token",
+          "request": {
+            "method": "GET",
+            "auth": {
+              "type": "noauth"
+            },
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/payments/{{paymentId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments", "{{paymentId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 401', () => pm.response.to.have.status(401));",
+                  "",
+                  "",
+                  "pm.test('Código de error UNAUTHORIZED', () => {",
+                  "  pm.expect(pm.response.json().error.code).to.eql('UNAUTHORIZED');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Token malformado",
+          "request": {
+            "method": "GET",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{malformedToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/payments/{{paymentId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments", "{{paymentId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 401', () => pm.response.to.have.status(401));",
+                  "",
+                  "",
+                  "pm.test('Código de error UNAUTHORIZED', () => {",
+                  "  pm.expect(pm.response.json().error.code).to.eql('UNAUTHORIZED');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Token firmado con otro secreto",
+          "request": {
+            "method": "GET",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{wrongSecretToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/payments/{{paymentId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments", "{{paymentId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 401', () => pm.response.to.have.status(401));",
+                  "",
+                  "",
+                  "pm.test('Código de error UNAUTHORIZED', () => {",
+                  "  pm.expect(pm.response.json().error.code).to.eql('UNAUTHORIZED');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Token expirado",
+          "request": {
+            "method": "GET",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{expiredToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/payments/{{paymentId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments", "{{paymentId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 401', () => pm.response.to.have.status(401));",
+                  "",
+                  "",
+                  "pm.test('Código de error UNAUTHORIZED', () => {",
+                  "  pm.expect(pm.response.json().error.code).to.eql('UNAUTHORIZED');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Rol Organizer intenta crear un pago",
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{organizerToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{runId}}-auth-organizer"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{sessionEmpty}}\",\n  \"amount\": 150000,\n  \"currency\": \"MXN\",\n  \"paymentMethodToken\": \"tok_visa\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 403', () => pm.response.to.have.status(403));",
+                  "",
+                  "",
+                  "pm.test('Código de error FORBIDDEN', () => {",
+                  "  pm.expect(pm.response.json().error.code).to.eql('FORBIDDEN');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Consultar el pago de otro usuario",
+          "request": {
+            "method": "GET",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{otherFanToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/payments/{{paymentId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments", "{{paymentId}}"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 403', () => pm.response.to.have.status(403));",
+                  "",
+                  "",
+                  "pm.test('Código de error PAYMENT_ACCESS_DENIED', () => {",
+                  "  pm.expect(pm.response.json().error.code).to.eql('PAYMENT_ACCESS_DENIED');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Capturar el pago de otro usuario",
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{otherFanToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{runId}}-auth-other-capture"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments/{{retryPaymentId}}/capture",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments", "{{retryPaymentId}}", "capture"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 403', () => pm.response.to.have.status(403));",
+                  "",
+                  "",
+                  "pm.test('Código de error PAYMENT_ACCESS_DENIED', () => {",
+                  "  pm.expect(pm.response.json().error.code).to.eql('PAYMENT_ACCESS_DENIED');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Pago inexistente",
+          "request": {
+            "method": "GET",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{fanToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/payments/bbbbbbbb-bbbb-4bbb-8bbb-000000000000",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments", "bbbbbbbb-bbbb-4bbb-8bbb-000000000000"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 404', () => pm.response.to.have.status(404));",
+                  "",
+                  "",
+                  "pm.test('Código de error PAYMENT_NOT_FOUND', () => {",
+                  "  pm.expect(pm.response.json().error.code).to.eql('PAYMENT_NOT_FOUND');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Sesión sin pagos",
+          "request": {
+            "method": "GET",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{fanToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/payments?sessionId={{sessionEmpty}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments"],
+              "query": [
+                {
+                  "key": "sessionId",
+                  "value": "{{sessionEmpty}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 404', () => pm.response.to.have.status(404));",
+                  "",
+                  "",
+                  "pm.test('Código de error PAYMENT_NOT_FOUND', () => {",
+                  "  pm.expect(pm.response.json().error.code).to.eql('PAYMENT_NOT_FOUND');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "07 · Proveedor caído (502)",
+      "description": "tok_provider_error simula una caída del proveedor. El servicio reintenta con backoff, responde 502, no guarda nada y libera la llave para que Booking reintente.",
+      "item": [
+        {
+          "name": "Crear pago con el proveedor caído",
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{fanToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{runId}}-outage-create"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{sessionOutage}}\",\n  \"amount\": 150000,\n  \"currency\": \"MXN\",\n  \"paymentMethodToken\": \"tok_provider_error\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 502', () => pm.response.to.have.status(502));",
+                  "",
+                  "",
+                  "pm.test('Código de error PROVIDER_UNAVAILABLE', () => {",
+                  "  pm.expect(pm.response.json().error.code).to.eql('PROVIDER_UNAVAILABLE');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reintento con la misma llave se vuelve a ejecutar",
+          "request": {
+            "description": "Un 5xx no se guarda: el reintento no es una respuesta repetida.",
+            "method": "POST",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{fanToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{runId}}-outage-create"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/payments",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{sessionOutage}}\",\n  \"amount\": 150000,\n  \"currency\": \"MXN\",\n  \"paymentMethodToken\": \"tok_provider_error\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 502', () => pm.response.to.have.status(502));",
+                  "",
+                  "",
+                  "pm.test('No es una respuesta repetida (se volvió a ejecutar)', () => {",
+                  "  pm.expect(pm.response.headers.get('Idempotent-Replayed')).to.be.undefined;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "No quedó ningún pago guardado",
+          "request": {
+            "method": "GET",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{fanToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/payments?sessionId={{sessionOutage}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments"],
+              "query": [
+                {
+                  "key": "sessionId",
+                  "value": "{{sessionOutage}}"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 404', () => pm.response.to.have.status(404));",
+                  "",
+                  "",
+                  "pm.test('Código de error PAYMENT_NOT_FOUND', () => {",
+                  "  pm.expect(pm.response.json().error.code).to.eql('PAYMENT_NOT_FOUND');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "08 · Solo con Postgres y seeds",
+      "description": "Lee los pagos de db/seeds (usuario fanUserId). Solo funciona con docker compose (PAYMENT_STORE=postgres); omite esta carpeta en modo memoria.",
+      "item": [
+        {
+          "name": "Pago seed CAPTURED",
+          "request": {
+            "method": "GET",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{fanToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/payments/33333333-3333-4333-8333-333333333333",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments", "33333333-3333-4333-8333-333333333333"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "",
+                  "",
+                  "pm.test('Status del pago = CAPTURED', () => pm.expect(pm.response.json().status).to.eql('CAPTURED'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Pago seed FAILED con su motivo",
+          "request": {
+            "method": "GET",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{fanToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/payments/44444444-4444-4444-8444-444444444444",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments", "44444444-4444-4444-8444-444444444444"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "",
+                  "",
+                  "pm.test('Status del pago = FAILED', () => pm.expect(pm.response.json().status).to.eql('FAILED'));",
+                  "",
+                  "",
+                  "pm.test('declineReason = card_declined', () => pm.expect(pm.response.json().declineReason).to.eql('card_declined'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
