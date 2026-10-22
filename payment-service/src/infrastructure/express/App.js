@@ -1,4 +1,6 @@
 const express = require('express');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const healthRoutes = require('./routes/HealthRoutes');
 const { buildPaymentRoutes } = require('./routes/PaymentRoutes');
 const { errorHandler } = require('./middlewares/ErrorHandler');
@@ -13,7 +15,21 @@ const { RefundPaymentUseCase } = require('../../core/use-cases/RefundPaymentUseC
 function buildApp({ paymentRepository, paymentProvider, idempotencyStore, jwtSecret } = {}) {
   const app = express();
 
-  app.use(express.json());
+  app.use(helmet());
+
+  // Límite de 100 peticiones cada 15 minutos por IP
+  const limiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 100,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: {
+      error: { code: 'RATE_LIMIT_EXCEEDED', message: 'Demasiadas peticiones. Intenta más tarde.' },
+    },
+  });
+  app.use(limiter);
+
+  app.use(express.json({ limit: '100kb' }));
   app.use(healthRoutes);
 
   if (paymentRepository) {
