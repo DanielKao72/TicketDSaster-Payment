@@ -14,4 +14,13 @@ const config = {
   },
 };
 
+// Fail fast: Validate critical environment variables at startup
+if (config.paymentStore === 'postgres' && !config.database.url) {
+  throw new Error('FATAL: DATABASE_URL is required when PAYMENT_STORE=postgres.');
+}
+
+if (!config.jwt.secret) {
+  throw new Error('FATAL: JWT_SECRET is required to validate authentication tokens.');
+}
+
 module.exports = config;
