@@ -24,7 +24,7 @@ function buildApp({ paymentRepository, paymentProvider, idempotencyStore, jwtSec
     standardHeaders: true,
     legacyHeaders: false,
     message: {
-      error: { code: 'RATE_LIMIT_EXCEEDED', message: 'Demasiadas peticiones. Intenta más tarde.' },
+      error: { code: 'RATE_LIMIT_EXCEEDED', message: 'Too many requests, please try again later.' },
     },
   });
   app.use(limiter);
