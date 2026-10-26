@@ -6,11 +6,11 @@ const config = {
   database: {
     url: process.env.DATABASE_URL,
   },
-  // 'postgres' uses the Payment Store; 'memory' runs without a database (data is lost on restart).
   paymentStore: process.env.PAYMENT_STORE || 'memory',
   jwt: {
-    // Shared HS256 secret with the Auth Service, which issues the tokens.
-    secret: process.env.JWT_SECRET,
+    jwksUri: process.env.JWKS_URI,
+    issuer: process.env.JWT_ISSUER,
+    audience: process.env.JWT_AUDIENCE,
   },
 };
 

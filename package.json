@@ -1,6 +1,7 @@
 {
   "dependencies": {
     "express-rate-limit": "^8.7.1",
-    "helmet": "^8.3.0"
+    "helmet": "^8.3.0",
+    "jwks-rsa": "^4.1.0"
   }
 }
