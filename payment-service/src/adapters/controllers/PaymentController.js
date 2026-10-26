@@ -42,12 +42,10 @@ class PaymentController {
       idempotencyKey: req.get('Idempotency-Key'),
     });
     // nextAction only appears with a 202, while the customer still has to act.
-    res
-      .status(statusAfterProviderCall(payment, 201))
-      .json({
-        ...toResponse(payment),
-        ...(payment.nextAction ? { nextAction: payment.nextAction } : {}),
-      });
+    res.status(statusAfterProviderCall(payment, 201)).json({
+      ...toResponse(payment),
+      ...(payment.nextAction ? { nextAction: payment.nextAction } : {}),
+    });
   };
 
   getById = async (req, res) => {
