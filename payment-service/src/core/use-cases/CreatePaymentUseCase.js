@@ -7,6 +7,7 @@ const { PaymentAlreadyExistsError, ProviderUnavailableError } = require('../doma
 // authorization is not an error: the payment is persisted as FAILED.
 // Returns { payment, nextAction }: nextAction is only set while the customer still has
 // to act (e.g. 3-D Secure) and is never persisted.
+
 class CreatePaymentUseCase {
   #paymentRepository;
   #paymentProvider;
@@ -53,7 +54,8 @@ class CreatePaymentUseCase {
     }
 
     const saved = await this.#paymentRepository.save(payment);
-    return { payment: saved, nextAction };
+    saved.nextAction = nextAction;
+    return saved;
   }
 }
 
