@@ -21,6 +21,7 @@ node --test --test-name-pattern="health"   # tests matching a name
 npm run openapi                            # writes openapi.json (APP_VERSION overrides info.version)
 npm run token -- --sub <uuid> --role Fan   # signs a dev JWT with JWT_SECRET
 npm run db:migrate | db:rollback | db:seed # knex, needs DATABASE_URL
+npm run idempotency:purge                  # deletes Idempotency Keys past their retention once, needs DATABASE_URL
 docker compose up --build                  # Postgres + migrations/seeds + service (cp .env.example .env first)
 ```
 
@@ -34,7 +35,7 @@ From the repo root, `scripts/changelog.sh HEAD` previews the next release notes 
 - `core/use-cases/`: one class per use case (`CreatePaymentUseCase.js` → `CreatePaymentUseCase` with `execute()`). Ports are injected through the constructor.
 - `ports/outbound/`: abstract classes named after the port, one per port: `PaymentRepository`, `PaymentProvider`, `IdempotencyStore`. Adapters `extend` them. The port's constructor calls `ensurePortImplementation` (`ports/Port.js`), which rejects instantiating the port itself and throws if the adapter does not override every method. An incomplete adapter therefore fails when it is created, not mid-payment.
 - `adapters/`: `controllers/` (HTTP → use case), `repositories/` (knex implementations of the ports) and `providers/` (the payment provider ACL).
-- `infrastructure/`: `config/`, `database/` (knex instance), and `express/` (`App.js`, `OpenApi.js`, `routes/`, `middlewares/`).
+- `infrastructure/`: `config/`, `database/` (knex instance), `jobs/` (background jobs such as `IdempotencyKeyPurgeJob`) and `express/` (`App.js`, `OpenApi.js`, `routes/`, `middlewares/`).
 
 Rules:
 
@@ -42,7 +43,7 @@ Rules:
 - **Entrypoint:** `src/index.js` is the composition root. It is the only file that creates adapters, injects them into `buildApp(deps)` (`infrastructure/express/App.js`) and calls `listen()`.
 - **Tests:** they call `buildApp().listen(0)` on an ephemeral port and hit it with global `fetch`. Use-case tests inject fakes instead of mocking modules (`FakePaymentProvider` in `adapters/providers/FakePaymentProvider.js` is the provider fake).
 - **Naming:** files use UpperCamelCase and are named after what they export (`Payment.js`, `PaymentRepository.js`, `HealthController.js`, `HealthRoutes.js`). Tests keep the `.test.js` suffix (`Payment.test.js`). The exceptions are `index.js`, tool config files (`eslint.config.js`, `knexfile.js`) and knex migrations and seeds. Folders stay kebab-case (`use-cases/`). The port and its adapters are told apart by folder (`ports/outbound/PaymentRepository.js` vs `adapters/repositories/PostgresPaymentRepository.js`).
-- **Config:** all env access goes through `src/infrastructure/config/index.js` (`port`, `appVersion`, `database.url`, `paymentStore`, `jwt.secret`). Don't read `process.env` anywhere else.
+- **Config:** all env access goes through `src/infrastructure/config/index.js` (`port`, `appVersion`, `database.url`, `paymentStore`, `jwt.secret`, `idempotency.leaseSeconds`, `idempotency.retentionHours`, `idempotency.purgeIntervalMinutes`). Don't read `process.env` anywhere else.
 - **OpenAPI is generated from code.** Every route needs an `@openapi` JSDoc block in `src/infrastructure/express/routes/*.js`, which `src/infrastructure/express/OpenApi.js` (swagger-jsdoc) collects. `tests/OpenApi.test.js` checks the spec.
 - **Payment Store schema** is in `db/migrations/` (`payments`, `transactions`, `idempotency_keys`, with native Postgres enums for statuses). `db/seeds/` holds dummy data with one payment per status. Change the schema with a new migration; never edit an applied one.
 
@@ -56,7 +57,7 @@ Rules:
 
 - **Money**: integer minor units (cents) plus an ISO 4217 `currency`. Never floats.
 - **Status transitions** (`PENDING → AUTHORIZED → CAPTURED`, plus `FAILED`, `REFUNDED`) live only in the `Payment` aggregate (`core/domain/Payment.js`, rules in `PaymentStatus.js`). It throws `InvalidPaymentTransitionError` on an invalid transition, and the error handler maps that to 409.
-- **Idempotency**: every POST that creates a payment or refund requires an `Idempotency-Key` header (`infrastructure/express/middlewares/Idempotency.js`, persisted in `idempotency_keys` through the `IdempotencyStore` port). Provider retries reuse the same key, with timeouts and backoff.
+- **Idempotency**: every POST that creates a payment or refund requires an `Idempotency-Key` header (`infrastructure/express/middlewares/Idempotency.js`, persisted in `idempotency_keys` through the `IdempotencyStore` port). Provider retries reuse the same key, with timeouts and backoff. A claim holds the key for a lease (`IDEMPOTENCY_LEASE_SECONDS`): if the process dies before storing the response, the same request can claim the key again once the lease expires, and each claim's lease token keeps a late request from overwriting the new holder's response. `IdempotencyKeyPurgeJob` (started in `src/index.js`, or `npm run idempotency:purge`) deletes completed and abandoned keys older than `IDEMPOTENCY_RETENTION_HOURS`.
 - **Auth**: the service validates JWTs and never issues them (`infrastructure/express/middlewares/JwtAuth.js`; payload `{ sub, role: Fan|Organizer|VenueOwner, iat, exp }`). Role checks go through `middlewares/RequireRole.js`, never inline in controllers.
 - **Webhooks** from the provider must have their signature verified before they change a payment's status.
 - Never store or log card data (PAN, CVV, expiry), because card capture is delegated to the provider.

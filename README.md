@@ -56,11 +56,12 @@ Desde `payment-service/`:
 | `npm start` | Arranca el servicio (puerto `PORT`, por defecto 3000) |
 | `npm run lint` | ESLint + verificación de formato con Prettier |
 | `npm run format` | Formatea el código con Prettier |
-| `npm test` | Corre las pruebas unitarias (`node --test`) |
+| `npm test` | Corre las pruebas unitarias (`node --test`). Con `TEST_DATABASE_URL` también prueba el adapter de Postgres de las llaves de idempotencia, sobre una base que puede migrar y vaciar |
 | `npm run openapi` | Genera `openapi.json` a partir del código, sin levantar el servidor |
 | `npm run db:migrate` | Aplica las migraciones pendientes (requiere `DATABASE_URL`) |
 | `npm run db:rollback` | Revierte el último lote de migraciones |
 | `npm run db:seed` | Carga los datos de prueba |
+| `npm run idempotency:purge` | Borra una vez las llaves de idempotencia que pasaron su periodo de retención (requiere `DATABASE_URL`) |
 
 ## Cómo contribuir
 
