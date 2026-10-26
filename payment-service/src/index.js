@@ -8,6 +8,7 @@ const { PostgresPaymentRepository } = require('./adapters/repositories/PostgresP
 const { PostgresIdempotencyStore } = require('./adapters/repositories/PostgresIdempotencyStore');
 const { InMemoryPaymentRepository } = require('./adapters/repositories/InMemoryPaymentRepository');
 const { InMemoryIdempotencyStore } = require('./adapters/repositories/InMemoryIdempotencyStore');
+const { IdempotencyKeyPurgeJob } = require('./infrastructure/jobs/IdempotencyKeyPurgeJob');
 
 function buildStores() {
   const { leaseSeconds } = config.idempotency;
@@ -34,7 +35,15 @@ if (!config.jwt.secret) {
 // The external provider is still mocked; a real adapter would replace FakePaymentProvider here.
 const paymentProvider = new RetryingPaymentProvider({ provider: new FakePaymentProvider() });
 
-const app = buildApp({ ...buildStores(), paymentProvider, jwtSecret: config.jwt.secret });
+const stores = buildStores();
+const app = buildApp({ ...stores, paymentProvider, jwtSecret: config.jwt.secret });
+
+// Deletes the Idempotency Keys past their retention period (IDEMPOTENCY_PURGE_INTERVAL_MINUTES=0 disables it).
+new IdempotencyKeyPurgeJob({
+  idempotencyStore: stores.idempotencyStore,
+  retentionHours: config.idempotency.retentionHours,
+  intervalMinutes: config.idempotency.purgeIntervalMinutes,
+}).start();
 
 app.listen(config.port, () => {
   console.log(
