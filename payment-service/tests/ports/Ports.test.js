@@ -26,22 +26,48 @@ test('an adapter missing port methods fails when it is created', () => {
   });
 });
 
+test('an IdempotencyStore without purgeExpired fails when it is created', () => {
+  class NoPurgeIdempotencyStore extends IdempotencyStore {
+    async claim() {
+      return null;
+    }
+
+    async complete() {
+      return true;
+    }
+
+    async release() {
+      return true;
+    }
+  }
+
+  assert.throws(() => new NoPurgeIdempotencyStore(), {
+    name: 'TypeError',
+    message: 'NoPurgeIdempotencyStore must implement IdempotencyStore: purgeExpired',
+  });
+});
+
 test('a complete adapter can be created and is an instance of its port', () => {
   class MapIdempotencyStore extends IdempotencyStore {
     #records = new Map();
 
-    async claim({ key, requestHash }) {
+    async claim({ key, requestHash, leaseToken }) {
       if (this.#records.has(key)) return this.#records.get(key);
-      this.#records.set(key, { key, requestHash });
+      this.#records.set(key, { key, requestHash, leaseToken });
       return null;
     }
 
-    async complete(key, response) {
+    async complete(key, leaseToken, response) {
       Object.assign(this.#records.get(key), response);
+      return true;
     }
 
     async release(key) {
-      this.#records.delete(key);
+      return this.#records.delete(key);
+    }
+
+    async purgeExpired() {
+      return 0;
     }
   }
 

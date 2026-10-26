@@ -37,7 +37,10 @@ const sessionQuery = z.object({ sessionId: z.string().uuid() });
  *       description: >
  *         Unique key per operation (up to 255 characters). Retrying with the same key and
  *         body replays the original response (header `Idempotent-Replayed: true`) and never
- *         charges twice; the same key with a different body is a 409.
+ *         charges twice; the same key with a different body is a 409. While the first
+ *         request is still running, the key is a 409 `IDEMPOTENCY_IN_PROGRESS` with a
+ *         `Retry-After` header; if that request never finishes, the same request can reuse
+ *         the key once its lease expires (60 s by default). Keys are kept for 48 h by default.
  *       schema:
  *         type: string
  *     PaymentId:

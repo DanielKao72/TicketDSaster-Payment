@@ -10,17 +10,18 @@ const { InMemoryPaymentRepository } = require('./adapters/repositories/InMemoryP
 const { InMemoryIdempotencyStore } = require('./adapters/repositories/InMemoryIdempotencyStore');
 
 function buildStores() {
+  const { leaseSeconds } = config.idempotency;
   if (config.paymentStore === 'postgres') {
     const knex = createKnex(config);
     return {
       paymentRepository: new PostgresPaymentRepository(knex),
-      idempotencyStore: new PostgresIdempotencyStore(knex),
+      idempotencyStore: new PostgresIdempotencyStore(knex, { leaseSeconds }),
     };
   }
   if (config.paymentStore === 'memory') {
     return {
       paymentRepository: new InMemoryPaymentRepository(),
-      idempotencyStore: new InMemoryIdempotencyStore(),
+      idempotencyStore: new InMemoryIdempotencyStore({ leaseSeconds }),
     };
   }
   throw new Error(`PAYMENT_STORE must be 'postgres' or 'memory', got '${config.paymentStore}'`);

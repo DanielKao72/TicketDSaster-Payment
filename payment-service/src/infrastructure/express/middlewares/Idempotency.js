@@ -24,6 +24,13 @@ function hashRequest(req) {
   return crypto.createHash('sha256').update(fingerprint).digest('hex');
 }
 
+// Whole seconds (at least 1) until the lease expires, or null without a lease.
+function secondsUntil(leaseExpiresAt) {
+  if (!leaseExpiresAt) return null;
+  const ms = new Date(leaseExpiresAt).getTime() - Date.now();
+  return Math.max(1, Math.ceil(ms / 1000));
+}
+
 /**
  * Requires an Idempotency-Key header on POSTs that create payments or refunds.
  *
@@ -31,7 +38,13 @@ function hashRequest(req) {
  *   so a retry gets the same answer). On a 5xx the key is released so a retry runs again.
  * - Same key and same request: the stored response is replayed and nothing runs.
  * - Same key, different request: 409 IDEMPOTENCY_KEY_MISMATCH.
- * - Same key while the first request is still running: 409 IDEMPOTENCY_IN_PROGRESS.
+ * - Same key while the first request is still running: 409 IDEMPOTENCY_IN_PROGRESS, with a
+ *   Retry-After header until its lease expires.
+ * - Same key and same request after the first one was abandoned (its process died before
+ *   storing a response and the lease expired): the key is claimed again and the request runs.
+ *
+ * Each claim gets its own lease token, so a request that outlived its lease cannot store
+ * or release the response of the request that claimed the key after it.
  */
 function idempotency(idempotencyStore) {
   return async (req, res, next) => {
@@ -46,7 +59,8 @@ function idempotency(idempotencyStore) {
       }
 
       const requestHash = hashRequest(req);
-      const existing = await idempotencyStore.claim({ key, requestHash });
+      const leaseToken = crypto.randomUUID();
+      const existing = await idempotencyStore.claim({ key, requestHash, leaseToken });
 
       if (existing) {
         if (existing.requestHash !== requestHash) {
@@ -57,6 +71,8 @@ function idempotency(idempotencyStore) {
           );
         }
         if (existing.responseStatus === null || existing.responseStatus === undefined) {
+          const retryAfter = secondsUntil(existing.leaseExpiresAt);
+          if (retryAfter !== null) res.set('Retry-After', String(retryAfter));
           throw new HttpError(
             409,
             'IDEMPOTENCY_IN_PROGRESS',
@@ -75,13 +91,20 @@ function idempotency(idempotencyStore) {
         const status = res.statusCode;
         const settled =
           status >= 500
-            ? idempotencyStore.release(key)
-            : idempotencyStore.complete(key, {
+            ? idempotencyStore.release(key, leaseToken)
+            : idempotencyStore.complete(key, leaseToken, {
                 paymentId: body?.id ?? null,
                 responseStatus: status,
                 responseBody: body,
               });
         settled
+          .then((applied) => {
+            if (!applied) {
+              console.warn(
+                'The Idempotency-Key lease expired before the response was stored; it was not stored',
+              );
+            }
+          })
           .catch((err) => console.error('Could not store the idempotent response', err))
           .finally(() => sendJson(body));
         return res;
