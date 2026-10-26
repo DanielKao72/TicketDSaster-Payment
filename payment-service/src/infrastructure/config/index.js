@@ -12,7 +12,7 @@ const config = {
     // Shared HS256 secret with the Auth Service, which issues the tokens.
     secret: process.env.JWT_SECRET,
   },
-  paymentProvider: process.env.PAYMENT_PROVIDER ?? 'fake',
+  paymentProvider: process.env.PAYMENT_PROVIDER || 'fake',
   stripe: {
     secretKey: process.env.STRIPE_SECRET_KEY,
     webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,

@@ -36,12 +36,15 @@ class PaymentController {
   }
 
   create = async (req, res) => {
-    const payment = await this.#createPayment.execute({
+    const { payment, nextAction } = await this.#createPayment.execute({
       ...req.body,
       userId: req.user.id,
       idempotencyKey: req.get('Idempotency-Key'),
     });
-    res.status(statusAfterProviderCall(payment, 201)).json(toResponse(payment));
+    // nextAction only appears with a 202, while the customer still has to act.
+    res
+      .status(statusAfterProviderCall(payment, 201))
+      .json({ ...toResponse(payment), ...(nextAction ? { nextAction } : {}) });
   };
 
   getById = async (req, res) => {
