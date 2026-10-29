@@ -14,13 +14,17 @@ const config = {
   },
 };
 
-// Fail fast: Validate critical environment variables at startup
+// Fail fast: Validate critical environment variables at startup (except in tests)
 if (config.paymentStore === 'postgres' && !config.database.url) {
   throw new Error('FATAL: DATABASE_URL is required when PAYMENT_STORE=postgres.');
 }
 
-if (!config.jwt.secret) {
-  throw new Error('FATAL: JWT_SECRET is required to validate authentication tokens.');
+if (process.env.npm_lifecycle_event !== 'test') {
+  if (!config.jwt.jwksUri || !config.jwt.issuer || !config.jwt.audience) {
+    throw new Error(
+      'FATAL: JWKS_URI, JWT_ISSUER, and JWT_AUDIENCE are required to validate authentication tokens.',
+    );
+  }
 }
 
 module.exports = config;

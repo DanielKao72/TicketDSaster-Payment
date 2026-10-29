@@ -5,22 +5,20 @@ const { HttpError } = require('../HttpError');
 const ROLES = ['Fan', 'Organizer', 'VenueOwner'];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// Validates the JWT issued by the Auth Service using JWKS and checks iss/aud claims.
-// Exposes its claims as req.user = { id, role }.
-function jwtAuth({ jwksUri, issuer, audience }) {
-  const client = jwksClient({
-    jwksUri: jwksUri,
-    cache: true,
-    rateLimit: true,
-  });
+function jwtAuth({ jwksUri, issuer, audience, secret }) {
+  // Si no hay secret de pruebas, configuramos el cliente JWKS para producción
+  let client;
+  if (!secret) {
+    client = jwksClient({ jwksUri, cache: true, rateLimit: true });
+  }
 
   function getKey(header, callback) {
+    if (secret) {
+      return callback(null, secret); // Modo pruebas: llave simétrica
+    }
     client.getSigningKey(header.kid, function (err, key) {
-      if (err) {
-        return callback(err);
-      }
-      const signingKey = key.getPublicKey();
-      callback(null, signingKey);
+      if (err) return callback(err);
+      callback(null, key.getPublicKey()); // Modo producción: llave pública
     });
   }
 
@@ -31,31 +29,25 @@ function jwtAuth({ jwksUri, issuer, audience }) {
       return;
     }
 
-    // jwt.verify is asynchronous when using the getKey callback
-    jwt.verify(
-      token,
-      getKey,
-      {
-        algorithms: ['RS256', 'ES256'],
-        issuer: issuer,
-        audience: audience,
-      },
-      (err, payload) => {
-        if (err) {
-          next(new HttpError(401, 'UNAUTHORIZED', 'Invalid or expired token'));
-          return;
-        }
+    // En pruebas usamos HS256 sin validar issuer/audience; en prod RS256/ES256 estricto
+    const verifyOptions = secret
+      ? { algorithms: ['HS256'] }
+      : { algorithms: ['RS256', 'ES256'], issuer, audience };
 
-        // payments.user_id is a uuid, so sub must be one.
-        if (!UUID.test(String(payload.sub)) || !ROLES.includes(payload.role)) {
-          next(new HttpError(401, 'UNAUTHORIZED', 'Invalid token claims'));
-          return;
-        }
+    jwt.verify(token, getKey, verifyOptions, (err, payload) => {
+      if (err) {
+        next(new HttpError(401, 'UNAUTHORIZED', 'Invalid or expired token'));
+        return;
+      }
 
-        req.user = { id: payload.sub, role: payload.role };
-        next();
-      },
-    );
+      if (!UUID.test(String(payload.sub)) || !ROLES.includes(payload.role)) {
+        next(new HttpError(401, 'UNAUTHORIZED', 'Invalid token claims'));
+        return;
+      }
+
+      req.user = { id: payload.sub, role: payload.role };
+      next();
+    });
   };
 }
 

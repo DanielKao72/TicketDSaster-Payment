@@ -53,7 +53,12 @@ beforeEach(() => {
     paymentRepository,
     paymentProvider: new FakePaymentProvider(),
     idempotencyStore: new InMemoryIdempotencyStore(),
-    jwtSecret: JWT_SECRET,
+    jwtConfig: {
+      jwksUri: 'http://localhost:4000/.well-known/jwks.json',
+      issuer: 'urn:ticket-dsaster:auth',
+      audience: 'urn:ticket-dsaster:payments',
+      secret: JWT_SECRET,
+    },
   });
   server = app.listen(0);
   baseUrl = `http://localhost:${server.address().port}`;
