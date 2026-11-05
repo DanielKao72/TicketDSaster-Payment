@@ -12,7 +12,13 @@ const { RefundPaymentUseCase } = require('../../core/use-cases/RefundPaymentUseC
 
 // The composition root (src/index.js) passes the adapters here. Without them (e.g. in
 // the health test) only /health is mounted.
-function buildApp({ paymentRepository, paymentProvider, idempotencyStore, jwtConfig } = {}) {
+function buildApp({
+  paymentRepository,
+  paymentProvider,
+  idempotencyStore,
+  jwtConfig,
+  rateLimitOptions = {},
+} = {}) {
   const app = express();
 
   app.use(helmet());
@@ -25,6 +31,7 @@ function buildApp({ paymentRepository, paymentProvider, idempotencyStore, jwtCon
     message: {
       error: { code: 'RATE_LIMIT_EXCEEDED', message: 'Too many requests, please try again later.' },
     },
+    ...rateLimitOptions,
   });
   app.use(limiter);
 

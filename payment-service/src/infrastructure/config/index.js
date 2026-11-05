@@ -49,21 +49,32 @@ const config = {
   },
 };
 
-// Fail fast: Validate critical environment variables at startup (except in tests)
-if (config.paymentStore === 'postgres' && !config.database.url) {
-  throw new Error('FATAL: DATABASE_URL is required when PAYMENT_STORE=postgres.');
-}
+const isTestEnv =
+  process.env.NODE_ENV === 'test' ||
+  process.env.npm_lifecycle_event === 'test' ||
+  process.argv.includes('--test') ||
+  Boolean(process.env.NODE_TEST_CONTEXT);
 
-if (config.paymentProvider === 'stripe' && !config.stripe.secretKey) {
-  throw new Error('FATAL: STRIPE_SECRET_KEY is required when PAYMENT_PROVIDER=stripe.');
-}
+// Fail fast: Validate critical environment variables at startup (Report ref: 5.4)
+function validateConfig(cfg = config, { isTest = isTestEnv } = {}) {
+  if (cfg.paymentStore === 'postgres' && !cfg.database?.url) {
+    throw new Error('FATAL: DATABASE_URL is required when PAYMENT_STORE=postgres.');
+  }
 
-if (process.env.npm_lifecycle_event !== 'test') {
-  if (!config.jwt.jwksUri || !config.jwt.issuer || !config.jwt.audience) {
-    throw new Error(
-      'FATAL: JWKS_URI, JWT_ISSUER, and JWT_AUDIENCE are required to validate authentication tokens.',
-    );
+  if (cfg.paymentProvider === 'stripe' && !cfg.stripe?.secretKey) {
+    throw new Error('FATAL: STRIPE_SECRET_KEY is required when PAYMENT_PROVIDER=stripe.');
+  }
+
+  if (!isTest) {
+    if (!cfg.jwt?.jwksUri || !cfg.jwt?.issuer || !cfg.jwt?.audience) {
+      throw new Error(
+        'FATAL: JWKS_URI, JWT_ISSUER, and JWT_AUDIENCE are required to validate authentication tokens.',
+      );
+    }
   }
 }
 
+validateConfig(config);
+
+config.validateConfig = validateConfig;
 module.exports = config;
