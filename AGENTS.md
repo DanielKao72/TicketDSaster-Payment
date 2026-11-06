@@ -34,7 +34,7 @@ From the repo root, `scripts/changelog.sh HEAD` previews the next release notes 
 - `core/use-cases/`: one class per use case (`CreatePaymentUseCase.js` → `CreatePaymentUseCase` with `execute()`). Ports are injected through the constructor.
 - `ports/outbound/`: abstract classes named after the port, one per port: `PaymentRepository`, `PaymentProvider`, `IdempotencyStore`. Adapters `extend` them. The port's constructor calls `ensurePortImplementation` (`ports/Port.js`), which rejects instantiating the port itself and throws if the adapter does not override every method. An incomplete adapter therefore fails when it is created, not mid-payment.
 - `adapters/`: `controllers/` (HTTP → use case), `repositories/` (knex implementations of the ports) and `providers/` (the payment provider ACL).
-- `infrastructure/`: `config/`, `database/` (knex instance), and `express/` (`App.js`, `OpenApi.js`, `routes/`, `middlewares/`).
+- `infrastructure/`: `config/`, `database/` (knex instance and its pool/timeout options, also used by `knexfile.js` for migrations), and `express/` (`App.js`, `OpenApi.js`, `routes/`, `middlewares/`).
 
 Rules:
 
@@ -42,7 +42,7 @@ Rules:
 - **Entrypoint:** `src/index.js` is the composition root. It is the only file that creates adapters, injects them into `buildApp(deps)` (`infrastructure/express/App.js`) and calls `listen()`.
 - **Tests:** they call `buildApp().listen(0)` on an ephemeral port and hit it with global `fetch`. Use-case tests inject fakes instead of mocking modules (`FakePaymentProvider` in `adapters/providers/FakePaymentProvider.js` is the provider fake).
 - **Naming:** files use UpperCamelCase and are named after what they export (`Payment.js`, `PaymentRepository.js`, `HealthController.js`, `HealthRoutes.js`). Tests keep the `.test.js` suffix (`Payment.test.js`). The exceptions are `index.js`, tool config files (`eslint.config.js`, `knexfile.js`) and knex migrations and seeds. Folders stay kebab-case (`use-cases/`). The port and its adapters are told apart by folder (`ports/outbound/PaymentRepository.js` vs `adapters/repositories/PostgresPaymentRepository.js`).
-- **Config:** all env access goes through `src/infrastructure/config/index.js` (`appEnv`, `port`, `appVersion`, `database.url`, `paymentStore`, `jwt.secret`). Don't read `process.env` anywhere else.
+- **Config:** all env access goes through `src/infrastructure/config/index.js` (`appEnv`, `port`, `appVersion`, `database` (url, pool and timeouts per `APP_ENV`, overridable with `DB_*`), `paymentStore`, `jwt.secret`). Don't read `process.env` anywhere else.
 - **OpenAPI is generated from code.** Every route needs an `@openapi` JSDoc block in `src/infrastructure/express/routes/*.js`, which `src/infrastructure/express/OpenApi.js` (swagger-jsdoc) collects. `tests/OpenApi.test.js` checks the spec.
 - **Payment Store schema** is in `db/migrations/` (`payments`, `transactions`, `idempotency_keys`, with native Postgres enums for statuses). `db/seeds/` holds dummy data with one payment per status. Change the schema with a new migration; never edit an applied one. Migrations run as their own pipeline step (`.github/workflows/migrate.yml`, the `migrations` CI job), never on service startup. Seeds call `db/SeedGuard.js` and refuse to run with `APP_ENV=production` (the Docker image's default). See `docs/operations/database.md`.
 
