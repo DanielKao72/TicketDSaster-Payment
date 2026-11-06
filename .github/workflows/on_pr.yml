@@ -100,3 +100,8 @@ jobs:
 
       - name: "seeds load in development"
         run: APP_ENV=development npm run db:seed
+
+      # The tests that need a real Postgres: concurrency (no double charge, one active
+      # payment per Session), audit guards, pool and timeouts. They migrate and wipe it.
+      - name: "tests against Postgres"
+        run: TEST_DATABASE_URL="$DATABASE_URL" npm test

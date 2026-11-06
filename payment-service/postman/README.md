@@ -56,7 +56,7 @@ npx newman run postman/PaymentService.postman_collection.json \
 | `CapturePaymentUseCase` | `POST /payments/:paymentId/capture`                    | 01, 02, 06             |
 | `RefundPaymentUseCase`  | `POST /payments/:paymentId/refund`                     | 01, 03                 |
 
-**Lo que no cubre Postman**, porque las peticiones van una tras otra: las peticiones **concurrentes** con la misma llave. Ese caso está en `tests/infrastructure/express/routes/PaymentRoutes.test.js` (`npm test`).
+**Lo que no cubre Postman**, porque las peticiones van una tras otra: las peticiones **concurrentes**. Con la misma llave están en `tests/infrastructure/express/routes/PaymentRoutes.test.js`; con llaves distintas para la misma sesión (sin doble cobro y un solo pago activo), en `tests/infrastructure/express/routes/PaymentConcurrency.test.js`, que también corre contra Postgres en CI.
 
 ## Detalle de las pruebas
 

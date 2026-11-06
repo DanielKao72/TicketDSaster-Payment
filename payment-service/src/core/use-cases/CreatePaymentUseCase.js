@@ -5,6 +5,11 @@ const { PaymentAlreadyExistsError, ProviderUnavailableError } = require('../doma
 
 // Creates the Payment of a Session and asks the provider to authorize it. A declined
 // authorization is not an error: the payment is persisted as FAILED.
+//
+// The Session is reserved before calling the provider: the payment is saved as PENDING
+// first, and the repository allows one active payment per Session atomically. Of
+// several concurrent requests for the same Session (even with different
+// Idempotency-Keys), only one gets past that save, so the provider authorizes once.
 class CreatePaymentUseCase {
   #paymentRepository;
   #paymentProvider;
@@ -20,18 +25,33 @@ class CreatePaymentUseCase {
       throw new PaymentAlreadyExistsError(sessionId);
     }
 
-    const payment = Payment.create({ sessionId, userId, amount, currency });
+    // Throws PaymentAlreadyExistsError if another request reserved the Session meanwhile.
+    const payment = await this.#paymentRepository.save(
+      Payment.create({ sessionId, userId, amount, currency }),
+    );
 
-    // Nothing is persisted if the provider is unavailable, so the retry starts clean
-    // (and reuses the idempotencyKey, so the provider never charges twice).
-    const result = await this.#paymentProvider.authorize({
-      paymentId: payment.id,
-      amount: payment.amount,
-      currency: payment.currency,
-      paymentMethodToken,
-      idempotencyKey,
-    });
+    let result;
+    try {
+      result = await this.#paymentProvider.authorize({
+        paymentId: payment.id,
+        amount: payment.amount,
+        currency: payment.currency,
+        paymentMethodToken,
+        idempotencyKey,
+      });
+      this.#apply(payment, result);
+    } catch (err) {
+      // The provider is unavailable (or answered something unknown): release the
+      // Session so the retry starts clean. The retry reuses the idempotencyKey, so the
+      // provider never charges twice.
+      await this.#paymentRepository.discardPending(payment);
+      throw err;
+    }
 
+    return this.#paymentRepository.save(payment);
+  }
+
+  #apply(payment, result) {
     switch (result.status) {
       case PaymentStatus.AUTHORIZED:
         payment.authorize(result.providerReference);
@@ -48,8 +68,6 @@ class CreatePaymentUseCase {
       default:
         throw new ProviderUnavailableError(`Unexpected provider status: ${result.status}`);
     }
-
-    return this.#paymentRepository.save(payment);
   }
 }
 

@@ -22,7 +22,7 @@ test('an adapter missing port methods fails when it is created', () => {
   assert.throws(() => new IncompletePaymentRepository(), {
     name: 'TypeError',
     message:
-      'IncompletePaymentRepository must implement PaymentRepository: findById, findBySessionId',
+      'IncompletePaymentRepository must implement PaymentRepository: discardPending, findById, findBySessionId',
   });
 });
 

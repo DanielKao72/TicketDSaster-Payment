@@ -1,6 +1,7 @@
 // Audit trail and append-only guards of the Payment Store (6.3), against Postgres.
 const { describe, test, before, beforeEach, after } = require('node:test');
 const assert = require('node:assert');
+const { randomUUID } = require('node:crypto');
 const { skip, connect, wipe } = require('../support/PostgresTestDatabase');
 const {
   PostgresPaymentRepository,
@@ -26,9 +27,9 @@ describe('Payment Store audit and retention guards', { skip }, () => {
     await knex?.destroy();
   });
 
-  async function capturedPayment() {
+  async function capturedPayment(sessionId = randomUUID()) {
     const payment = Payment.create({
-      sessionId: 'aaaaaaaa-aaaa-4aaa-8aaa-000000000001',
+      sessionId,
       userId: USER_ID,
       amount: 150000,
       currency: 'MXN',
@@ -104,6 +105,51 @@ describe('Payment Store audit and retention guards', { skip }, () => {
     for (const table of ['payments', 'transactions', 'payment_audit_log']) {
       await assert.rejects(knex.raw(`TRUNCATE ${table} CASCADE`), /cannot be truncated/);
     }
+  });
+
+  test('a PENDING payment without transactions can be discarded, and it is logged', async () => {
+    const reserved = await repository.save(
+      Payment.create({
+        sessionId: 'aaaaaaaa-aaaa-4aaa-8aaa-000000000002',
+        userId: USER_ID,
+        amount: 1000,
+        currency: 'MXN',
+      }),
+    );
+
+    assert.strictEqual(await repository.discardPending(reserved), true);
+
+    assert.strictEqual(await repository.findById(reserved.id), null);
+    const log = await knex('payment_audit_log')
+      .where({ payment_id: reserved.id })
+      .orderBy('id')
+      .pluck('operation');
+    assert.deepStrictEqual(log, ['INSERT', 'DELETE']);
+  });
+
+  test('a payment with transactions is never discarded', async () => {
+    const payment = await capturedPayment();
+
+    assert.strictEqual(await repository.discardPending(payment), false);
+    await assert.rejects(
+      knex('payments')
+        .where({ id: payment.id })
+        .update({ status: 'PENDING' })
+        .then(() => knex('payments').where({ id: payment.id }).del()),
+      /cannot be deleted/,
+    );
+  });
+
+  test('a second active payment for a Session is rejected by the database', async () => {
+    const first = await capturedPayment();
+    const second = Payment.create({
+      sessionId: first.sessionId,
+      userId: USER_ID,
+      amount: 1000,
+      currency: 'MXN',
+    });
+
+    await assert.rejects(repository.save(second), { name: 'PaymentAlreadyExistsError' });
   });
 
   test('a transaction that sets payment_store.allow_delete can delete, and it is logged', async () => {

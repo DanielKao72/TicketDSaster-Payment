@@ -62,6 +62,51 @@ test('nothing is persisted when the provider is unavailable', async () => {
   assert.strictEqual(await paymentRepository.findBySessionId(PAYMENT_REQUEST.sessionId), null);
 });
 
+test('the Session is reserved as PENDING while the provider answers', async () => {
+  let duringAuthorization;
+  const { createPayment, paymentRepository } = setup({
+    authorize: async () => {
+      duringAuthorization = await paymentRepository.findBySessionId(PAYMENT_REQUEST.sessionId);
+      return { status: 'AUTHORIZED', providerReference: 'ch_1' };
+    },
+  });
+
+  const payment = await createPayment.execute(PAYMENT_REQUEST);
+
+  assert.strictEqual(duringAuthorization.status, 'PENDING');
+  assert.strictEqual(duringAuthorization.id, payment.id);
+});
+
+test('a second request while the Session is reserved is rejected without calling the provider', async () => {
+  let release;
+  const { createPayment, paymentProvider } = setup({
+    authorize: () =>
+      new Promise((resolve) => {
+        release = () => resolve({ status: 'AUTHORIZED', providerReference: 'ch_1' });
+      }),
+  });
+
+  const first = createPayment.execute(PAYMENT_REQUEST);
+  await new Promise((resolve) => setImmediate(resolve));
+  await assert.rejects(
+    createPayment.execute({ ...PAYMENT_REQUEST, idempotencyKey: 'create-2' }),
+    PaymentAlreadyExistsError,
+  );
+  release();
+
+  assert.strictEqual((await first).status, 'AUTHORIZED');
+  assert.strictEqual(paymentProvider.calls.authorize, 1);
+});
+
+test('an unexpected provider status releases the Session too', async () => {
+  const { createPayment, paymentRepository } = setup({
+    authorize: async () => ({ status: 'SOMETHING_NEW', providerReference: 'x' }),
+  });
+
+  await assert.rejects(createPayment.execute(PAYMENT_REQUEST), ProviderUnavailableError);
+  assert.strictEqual(await paymentRepository.findBySessionId(PAYMENT_REQUEST.sessionId), null);
+});
+
 test('a PENDING provider result keeps the payment PENDING', async () => {
   const { createPayment } = setup({
     authorize: async () => ({ status: 'PENDING', providerReference: 'ch_async' }),

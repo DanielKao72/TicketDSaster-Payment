@@ -55,6 +55,7 @@ Rules:
 ### Conventions for payment features
 
 - **Money**: integer minor units (cents) plus an ISO 4217 `currency`. Never floats.
+- **One active payment per Session**: `CreatePaymentUseCase` reserves the Session by saving the payment as PENDING before calling the provider; the repository enforces one non-FAILED payment per Session atomically (Postgres unique partial index `payments_one_active_per_session`) and throws `PaymentAlreadyExistsError`. If the provider fails, `discardPending` releases the reservation. `tests/infrastructure/express/routes/PaymentConcurrency.test.js` proves it under concurrent requests with different keys.
 - **Status transitions** (`PENDING → AUTHORIZED → CAPTURED`, plus `FAILED`, `REFUNDED`) live only in the `Payment` aggregate (`core/domain/Payment.js`, rules in `PaymentStatus.js`). It throws `InvalidPaymentTransitionError` on an invalid transition, and the error handler maps that to 409.
 - **Idempotency**: every POST that creates a payment or refund requires an `Idempotency-Key` header (`infrastructure/express/middlewares/Idempotency.js`, persisted in `idempotency_keys` through the `IdempotencyStore` port). Provider retries reuse the same key, with timeouts and backoff.
 - **Auth**: the service validates JWTs and never issues them (`infrastructure/express/middlewares/JwtAuth.js`; payload `{ sub, role: Fan|Organizer|VenueOwner, iat, exp }`). Role checks go through `middlewares/RequireRole.js`, never inline in controllers.
@@ -62,7 +63,7 @@ Rules:
 - Never store or log card data (PAN, CVV, expiry), because card capture is delegated to the provider.
 - Use async/await throughout, with a centralized error-handling middleware (`infrastructure/express/middlewares/ErrorHandler.js`, which maps `DomainError` subclasses to status codes). Validate input (joi or zod) before the use-case layer.
 - **Status codes**: 201 create, 200 query, 202 accepted but provider result pending, 400, 401, 403, 404, 409 duplicate or idempotency-key payload mismatch, 422 provider declined, 502 provider failure or timeout.
-- **Tests** mirror `src/` under `tests/` (`tests/core/domain/Payment.test.js`). Domain tests need no fakes. Use-case tests inject fake ports (repository, provider, idempotency store). Route integration tests use a test or in-memory store. Explicitly cover idempotency (no double charge) and invalid transitions.
+- **Tests** mirror `src/` under `tests/` (`tests/core/domain/Payment.test.js`). Domain tests need no fakes. Use-case tests inject fake ports (repository, provider, idempotency store). Route integration tests use a test or in-memory store. Tests that need a real Postgres use `tests/support/PostgresTestDatabase.js` and run only with `TEST_DATABASE_URL` (CI sets it in the `migrations` job). Explicitly cover idempotency (no double charge) and invalid transitions.
 
 ## Repository workflow
 
