@@ -58,7 +58,7 @@ Desde `payment-service/`:
 | `npm start` | Arranca el servicio (puerto `PORT`, por defecto 3000) |
 | `npm run lint` | ESLint + verificación de formato con Prettier |
 | `npm run format` | Formatea el código con Prettier |
-| `npm test` | Corre las pruebas unitarias (`node --test`) |
+| `npm test` | Corre las pruebas (`node --test`). Con `TEST_DATABASE_URL` también corre las que necesitan Postgres, sobre una base que pueden migrar y vaciar |
 | `npm run openapi` | Genera `openapi.json` a partir del código, sin levantar el servidor |
 | `npm run db:migrate` | Aplica las migraciones pendientes (requiere `DATABASE_URL`) |
 | `npm run db:rollback` | Revierte el último lote de migraciones |

@@ -31,36 +31,42 @@ const transactionsByStatus = {
 exports.seed = async function seed(knex) {
   assertSeedsAllowed(config.appEnv);
 
-  await knex('idempotency_keys').del();
-  await knex('transactions').del();
-  await knex('payments').del();
+  await knex.transaction(async (trx) => {
+    // payments, transactions and the audit log are protected against deletes (6.3);
+    // the seeds wipe them inside this transaction only.
+    await trx.raw("SELECT set_config('payment_store.allow_delete', 'on', true)");
+    await trx('idempotency_keys').del();
+    await trx('transactions').del();
+    await trx('payments').del();
+    await trx('payment_audit_log').del();
 
-  await knex('payments').insert(
-    payments.map((payment, index) => ({
-      ...payment,
-      session_id: `aaaaaaaa-aaaa-4aaa-8aaa-00000000000${index + 1}`,
-      user_id: USER_ID,
-      currency: 'MXN',
-      decline_reason: payment.status === 'FAILED' ? 'card_declined' : null,
-    })),
-  );
-
-  await knex('transactions').insert(
-    payments.flatMap((payment) =>
-      transactionsByStatus[payment.status].map((transaction, index) => ({
-        ...transaction,
-        payment_id: payment.id,
-        amount: payment.amount,
-        provider_reference: `sandbox_${payment.status.toLowerCase()}_${index + 1}`,
+    await trx('payments').insert(
+      payments.map((payment, index) => ({
+        ...payment,
+        session_id: `aaaaaaaa-aaaa-4aaa-8aaa-00000000000${index + 1}`,
+        user_id: USER_ID,
+        currency: 'MXN',
+        decline_reason: payment.status === 'FAILED' ? 'card_declined' : null,
       })),
-    ),
-  );
+    );
 
-  await knex('idempotency_keys').insert({
-    key: 'seed-idempotency-key-captured',
-    request_hash: 'seed-request-hash',
-    payment_id: payments[2].id,
-    response_status: 201,
-    response_body: JSON.stringify({ id: payments[2].id, status: 'CAPTURED' }),
+    await trx('transactions').insert(
+      payments.flatMap((payment) =>
+        transactionsByStatus[payment.status].map((transaction, index) => ({
+          ...transaction,
+          payment_id: payment.id,
+          amount: payment.amount,
+          provider_reference: `sandbox_${payment.status.toLowerCase()}_${index + 1}`,
+        })),
+      ),
+    );
+
+    await trx('idempotency_keys').insert({
+      key: 'seed-idempotency-key-captured',
+      request_hash: 'seed-request-hash',
+      payment_id: payments[2].id,
+      response_status: 201,
+      response_body: JSON.stringify({ id: payments[2].id, status: 'CAPTURED' }),
+    });
   });
 };
