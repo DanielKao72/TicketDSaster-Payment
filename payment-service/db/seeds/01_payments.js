@@ -1,4 +1,8 @@
 // Dummy data for local development: one payment per status, with its transactions.
+// Never runs in production (see db/SeedGuard.js).
+const config = require('../../src/infrastructure/config');
+const { assertSeedsAllowed } = require('../SeedGuard');
+
 const USER_ID = '00000000-0000-4000-8000-000000000001';
 
 const payments = [
@@ -25,6 +29,8 @@ const transactionsByStatus = {
 };
 
 exports.seed = async function seed(knex) {
+  assertSeedsAllowed(config.appEnv);
+
   await knex('idempotency_keys').del();
   await knex('transactions').del();
   await knex('payments').del();

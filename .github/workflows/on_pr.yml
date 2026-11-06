@@ -43,3 +43,60 @@ jobs:
 
       - name: "build docker image"
         run: docker build -t payment-service:ci .
+
+  # Migrations run as their own step, exactly as in the deployment pipeline
+  # (.github/workflows/migrate.yml): applied from scratch, fully rolled back and applied
+  # again, so a broken up or down fails here and not in a deploy. It also checks that
+  # seeds refuse to run in production.
+  migrations:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: payment
+          POSTGRES_PASSWORD: payment
+          POSTGRES_DB: payment_store
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U payment -d payment_store"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgres://payment:payment@localhost:5432/payment_store
+
+    steps:
+      - name: "checkout code"
+        uses: actions/checkout@v5
+
+      - name: "Setup node js"
+        uses: actions/setup-node@v5
+        with:
+          node-version-file: payment-service/.nvmrc
+          cache: npm
+          cache-dependency-path: payment-service/package-lock.json
+
+      - name: "install dependencies"
+        run: npm ci
+
+      - name: "apply migrations"
+        run: APP_ENV=production npm run db:migrate
+
+      - name: "seeds refuse to run in production"
+        run: |
+          if APP_ENV=production npm run db:seed; then
+            echo "::error::db:seed ran with APP_ENV=production"
+            exit 1
+          fi
+
+      - name: "roll back every migration and apply them again"
+        run: |
+          npx knex migrate:rollback --all
+          APP_ENV=production npm run db:migrate
+
+      - name: "seeds load in development"
+        run: APP_ENV=development npm run db:seed

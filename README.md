@@ -32,6 +32,8 @@ curl http://localhost:3000/health
 # {"status":"ok"}
 ```
 
+Compose corre tres pasos en orden: `migrate` (solo migraciones), `seed` (datos de prueba, solo en local) y el servicio. En los entornos desplegados las migraciones son un paso del pipeline y los seeds nunca corren; ver [`docs/operations/database.md`](docs/operations/database.md).
+
 Para apagarlo: `docker compose down`. Agrega `-v` para borrar también los datos de la base.
 
 ### Opción B: el servicio en tu máquina y la base en Docker
@@ -60,7 +62,7 @@ Desde `payment-service/`:
 | `npm run openapi` | Genera `openapi.json` a partir del código, sin levantar el servidor |
 | `npm run db:migrate` | Aplica las migraciones pendientes (requiere `DATABASE_URL`) |
 | `npm run db:rollback` | Revierte el último lote de migraciones |
-| `npm run db:seed` | Carga los datos de prueba |
+| `npm run db:seed` | Carga los datos de prueba. Se niega a correr con `APP_ENV=production` |
 
 ## Cómo contribuir
 
