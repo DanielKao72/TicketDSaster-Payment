@@ -27,6 +27,10 @@ npx newman run postman/PaymentService.postman_collection.json \
 # En modo memoria, excluye la carpeta 08 listando las demás con --folder "00 · Preparación" --folder ...
 ```
 
+### En CI
+
+El job `postman` de `.github/workflows/on_pr.yml` corre la suite completa en cada PR: levanta el servicio como contenedor con `docker compose up --build` (Postgres, migraciones, seeds de desarrollo y el servicio), espera a que `/health` responda y ejecuta newman con el `JWT_SECRET` de `.env.example`. El reporte JUnit queda como artefacto `newman-report` del workflow, y si falla se imprimen los logs de los contenedores.
+
 ## Cómo funciona
 
 - **Entradas en JSON.** Todos los bodies son `raw` con `Content-Type: application/json`. Capture y refund no llevan body: su entrada es el `paymentId` de la ruta.

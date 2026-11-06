@@ -105,3 +105,62 @@ jobs:
       # payment per Session), audit guards, pool and timeouts. They migrate and wipe it.
       - name: "tests against Postgres"
         run: TEST_DATABASE_URL="$DATABASE_URL" npm test
+
+  # The Postman suite (51 requests, payment-service/postman/) against the service built
+  # and run as a container, with its Postgres, migrations and dev seeds, exactly like
+  # `docker compose up --build` locally.
+  postman:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: "checkout code"
+        uses: actions/checkout@v5
+
+      - name: "Setup node js"
+        uses: actions/setup-node@v5
+        with:
+          node-version-file: payment-service/.nvmrc
+
+      - name: "start the service with docker compose"
+        run: |
+          cp .env.example .env
+          docker compose up --build --detach
+
+      - name: "wait until the service is healthy"
+        run: |
+          for attempt in $(seq 1 60); do
+            if curl --silent --fail http://localhost:3000/health > /dev/null; then
+              echo "Service is up"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::The service did not answer /health within 2 minutes"
+          docker compose ps --all
+          exit 1
+
+      - name: "run the Postman suite with newman"
+        run: |
+          JWT_SECRET="$(grep '^JWT_SECRET=' .env | cut -d= -f2-)"
+          npx --yes newman@6.2.3 run postman/PaymentService.postman_collection.json \
+            --environment postman/Local.postman_environment.json \
+            --env-var "baseUrl=http://localhost:3000" \
+            --env-var "jwtSecret=${JWT_SECRET}" \
+            --reporters cli,junit \
+            --reporter-junit-export newman-report.xml
+
+      - name: "service logs"
+        if: failure()
+        run: docker compose logs
+
+      - name: "upload the newman report"
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: newman-report
+          path: payment-service/newman-report.xml
+          if-no-files-found: ignore
+
+      - name: "stop the containers"
+        if: always()
+        run: docker compose down --volumes
