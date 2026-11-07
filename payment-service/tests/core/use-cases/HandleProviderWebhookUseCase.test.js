@@ -85,6 +85,19 @@ test('ignores an event with the same id (provider retry)', async () => {
   );
 });
 
+test('two parallel deliveries of the same event id process it only once', async () => {
+  const { payment, paymentRepository, webhook, providerReference } = await pendingPayment();
+  const sameEvent = event(providerReference, 'AUTHORIZED');
+  const transactionsBefore = (await paymentRepository.findById(payment.id)).transactions.length;
+
+  const results = await Promise.all([webhook.execute(sameEvent), webhook.execute(sameEvent)]);
+
+  assert.deepStrictEqual(results.map((result) => result.outcome).sort(), ['applied', 'duplicate']);
+  const stored = await paymentRepository.findById(payment.id);
+  assert.strictEqual(stored.status, 'AUTHORIZED');
+  assert.strictEqual(stored.transactions.length, transactionsBefore + 1);
+});
+
 test('ignores an event whose provider reference matches no payment', async () => {
   const { webhook } = await pendingPayment();
 
