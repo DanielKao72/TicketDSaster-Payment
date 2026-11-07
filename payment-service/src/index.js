@@ -4,6 +4,7 @@ const { buildApp } = require('./infrastructure/express/App');
 const { createKnex } = require('./infrastructure/database/Knex');
 const { FakePaymentProvider } = require('./adapters/providers/FakePaymentProvider');
 const { RetryingPaymentProvider } = require('./adapters/providers/RetryingPaymentProvider');
+const { StripeWebhookAdapter } = require('./adapters/providers/StripeWebhookAdapter');
 const { PostgresPaymentRepository } = require('./adapters/repositories/PostgresPaymentRepository');
 const { PostgresIdempotencyStore } = require('./adapters/repositories/PostgresIdempotencyStore');
 const { InMemoryPaymentRepository } = require('./adapters/repositories/InMemoryPaymentRepository');
@@ -32,8 +33,16 @@ if (!config.jwt.secret) {
 
 // The external provider is still mocked; a real adapter would replace FakePaymentProvider here.
 const paymentProvider = new RetryingPaymentProvider({ provider: new FakePaymentProvider() });
+const webhookAdapter = new StripeWebhookAdapter({
+  webhookSecret: config.webhook.secret,
+});
 
-const app = buildApp({ ...buildStores(), paymentProvider, jwtSecret: config.jwt.secret });
+const app = buildApp({
+  ...buildStores(),
+  paymentProvider,
+  webhookAdapter,
+  jwtSecret: config.jwt.secret,
+});
 
 app.listen(config.port, () => {
   console.log(

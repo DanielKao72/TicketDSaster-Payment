@@ -12,6 +12,10 @@ const config = {
     // Shared HS256 secret with the Auth Service, which issues the tokens.
     secret: process.env.JWT_SECRET,
   },
+  webhook: {
+    // Stripe endpoint signing secret (`whsec_...`); without it every webhook is rejected.
+    secret: process.env.PAYMENT_PROVIDER_WEBHOOK_SECRET,
+  },
 };
 
 module.exports = config;
