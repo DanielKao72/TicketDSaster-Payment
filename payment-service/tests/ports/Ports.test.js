@@ -3,9 +3,16 @@ const assert = require('node:assert');
 const { PaymentRepository } = require('../../src/ports/outbound/PaymentRepository');
 const { PaymentProvider } = require('../../src/ports/outbound/PaymentProvider');
 const { IdempotencyStore } = require('../../src/ports/outbound/IdempotencyStore');
+const { ProcessedEventStore } = require('../../src/ports/outbound/ProcessedEventStore');
 const { WebhookAdapter } = require('../../src/ports/outbound/WebhookAdapter');
 
-const PORTS = [PaymentRepository, PaymentProvider, IdempotencyStore, WebhookAdapter];
+const PORTS = [
+  PaymentRepository,
+  PaymentProvider,
+  IdempotencyStore,
+  ProcessedEventStore,
+  WebhookAdapter,
+];
 
 test('ports are abstract and cannot be instantiated', () => {
   for (const Port of PORTS) {

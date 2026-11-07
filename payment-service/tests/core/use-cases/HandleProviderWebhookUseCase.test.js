@@ -7,10 +7,14 @@ const { CreatePaymentUseCase } = require('../../../src/core/use-cases/CreatePaym
 const {
   InMemoryPaymentRepository,
 } = require('../../../src/adapters/repositories/InMemoryPaymentRepository');
+const {
+  InMemoryProcessedEventStore,
+} = require('../../../src/adapters/repositories/InMemoryProcessedEventStore');
 const { PAYMENT_REQUEST } = require('./Fixtures');
 
 async function pendingPayment(providerReference = 'ch_pending_1') {
   const paymentRepository = new InMemoryPaymentRepository();
+  const processedEventStore = new InMemoryProcessedEventStore();
   const createPayment = new CreatePaymentUseCase({
     paymentRepository,
     paymentProvider: { authorize: async () => ({ status: 'PENDING', providerReference }) },
@@ -20,7 +24,8 @@ async function pendingPayment(providerReference = 'ch_pending_1') {
   return {
     payment,
     paymentRepository,
-    webhook: new HandleProviderWebhookUseCase({ paymentRepository }),
+    processedEventStore,
+    webhook: new HandleProviderWebhookUseCase({ paymentRepository, processedEventStore }),
     providerReference,
   };
 }
@@ -63,6 +68,21 @@ test('resolves a PENDING payment to FAILED with the decline reason', async () =>
   const stored = await paymentRepository.findById(payment.id);
   assert.strictEqual(stored.status, 'FAILED');
   assert.strictEqual(stored.declineReason, 'card_declined');
+});
+
+test('ignores an event with the same id (provider retry)', async () => {
+  const { payment, paymentRepository, webhook, providerReference } = await pendingPayment();
+  const sameEvent = event(providerReference, 'AUTHORIZED');
+
+  await webhook.execute(sameEvent);
+  const transactionsAfterFirst = (await paymentRepository.findById(payment.id)).transactions.length;
+  const duplicate = await webhook.execute(sameEvent);
+
+  assert.strictEqual(duplicate.outcome, 'duplicate');
+  assert.strictEqual(
+    (await paymentRepository.findById(payment.id)).transactions.length,
+    transactionsAfterFirst,
+  );
 });
 
 test('ignores an event whose provider reference matches no payment', async () => {

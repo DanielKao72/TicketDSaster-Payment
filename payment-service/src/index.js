@@ -7,8 +7,14 @@ const { RetryingPaymentProvider } = require('./adapters/providers/RetryingPaymen
 const { StripeWebhookAdapter } = require('./adapters/providers/StripeWebhookAdapter');
 const { PostgresPaymentRepository } = require('./adapters/repositories/PostgresPaymentRepository');
 const { PostgresIdempotencyStore } = require('./adapters/repositories/PostgresIdempotencyStore');
+const {
+  PostgresProcessedEventStore,
+} = require('./adapters/repositories/PostgresProcessedEventStore');
 const { InMemoryPaymentRepository } = require('./adapters/repositories/InMemoryPaymentRepository');
 const { InMemoryIdempotencyStore } = require('./adapters/repositories/InMemoryIdempotencyStore');
+const {
+  InMemoryProcessedEventStore,
+} = require('./adapters/repositories/InMemoryProcessedEventStore');
 
 function buildStores() {
   if (config.paymentStore === 'postgres') {
@@ -16,12 +22,14 @@ function buildStores() {
     return {
       paymentRepository: new PostgresPaymentRepository(knex),
       idempotencyStore: new PostgresIdempotencyStore(knex),
+      processedEventStore: new PostgresProcessedEventStore(knex),
     };
   }
   if (config.paymentStore === 'memory') {
     return {
       paymentRepository: new InMemoryPaymentRepository(),
       idempotencyStore: new InMemoryIdempotencyStore(),
+      processedEventStore: new InMemoryProcessedEventStore(),
     };
   }
   throw new Error(`PAYMENT_STORE must be 'postgres' or 'memory', got '${config.paymentStore}'`);

@@ -6,20 +6,26 @@ const TERMINAL_STATUSES = new Set([PaymentStatus.FAILED, PaymentStatus.REFUNDED]
 /**
  * Applies a provider webhook to the Payment it refers to.
  *
+ * - Events are deduplicated by provider event id, so a retried delivery is a no-op.
  * - The payment is resolved through the provider reference recorded in its transactions.
  * - Out-of-order events never roll back a terminal state nor apply an invalid
  *   transition: they are acknowledged (2xx) and ignored.
  */
 class HandleProviderWebhookUseCase {
   #paymentRepository;
+  #processedEventStore;
 
-  constructor({ paymentRepository }) {
+  constructor({ paymentRepository, processedEventStore }) {
     this.#paymentRepository = paymentRepository;
+    this.#processedEventStore = processedEventStore;
   }
 
-  async execute({ providerReference, status, declineReason }) {
+  async execute({ eventId, type, providerReference, status, declineReason }) {
     const payment = await this.#paymentRepository.findByProviderReference(providerReference);
     if (!payment) return { outcome: 'ignored', reason: 'payment_not_found' };
+
+    const firstDelivery = await this.#processedEventStore.register(eventId, { type });
+    if (!firstDelivery) return { outcome: 'duplicate' };
 
     if (TERMINAL_STATUSES.has(payment.status)) {
       return { outcome: 'ignored', reason: 'terminal_status' };

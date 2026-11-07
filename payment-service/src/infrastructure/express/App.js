@@ -20,6 +20,7 @@ function buildApp({
   paymentProvider,
   idempotencyStore,
   jwtSecret,
+  processedEventStore,
   webhookAdapter,
 } = {}) {
   const app = express();
@@ -38,9 +39,12 @@ function buildApp({
     app.use(buildPaymentRoutes({ paymentController, idempotencyStore, jwtSecret }));
   }
 
-  if (paymentRepository && webhookAdapter) {
+  if (paymentRepository && processedEventStore && webhookAdapter) {
     const webhookController = new WebhookController({
-      handleProviderWebhook: new HandleProviderWebhookUseCase({ paymentRepository }),
+      handleProviderWebhook: new HandleProviderWebhookUseCase({
+        paymentRepository,
+        processedEventStore,
+      }),
     });
     app.use(buildWebhookRoutes({ webhookController, webhookAdapter }));
   }

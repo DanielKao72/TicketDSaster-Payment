@@ -7,6 +7,9 @@ const {
   InMemoryPaymentRepository,
 } = require('../../../../src/adapters/repositories/InMemoryPaymentRepository');
 const {
+  InMemoryProcessedEventStore,
+} = require('../../../../src/adapters/repositories/InMemoryProcessedEventStore');
+const {
   InMemoryIdempotencyStore,
 } = require('../../../../src/adapters/repositories/InMemoryIdempotencyStore');
 const { FakePaymentProvider } = require('../../../../src/adapters/providers/FakePaymentProvider');
@@ -61,6 +64,7 @@ beforeEach(async () => {
     paymentRepository,
     paymentProvider: new FakePaymentProvider(),
     idempotencyStore: new InMemoryIdempotencyStore(),
+    processedEventStore: new InMemoryProcessedEventStore(),
     webhookAdapter: new StripeWebhookAdapter({ webhookSecret: WEBHOOK_SECRET }),
     jwtSecret: 'test-secret',
   });
@@ -80,6 +84,19 @@ test('a signed event resolves the PENDING payment without a JWT', async () => {
   assert.strictEqual(response.status, 200);
   assert.strictEqual((await response.json()).outcome, 'applied');
   assert.strictEqual((await paymentRepository.findById(payment.id)).status, 'AUTHORIZED');
+});
+
+test('a retried delivery is acknowledged as a duplicate and changes nothing', async () => {
+  const body = eventBody();
+  await postWebhook(body);
+
+  const response = await postWebhook(body);
+
+  assert.strictEqual(response.status, 200);
+  assert.strictEqual((await response.json()).outcome, 'duplicate');
+  const stored = await paymentRepository.findById(payment.id);
+  assert.strictEqual(stored.status, 'AUTHORIZED');
+  assert.strictEqual(stored.transactions.length, payment.transactions.length + 1);
 });
 
 test('verifies the signature over the exact raw body', async () => {
