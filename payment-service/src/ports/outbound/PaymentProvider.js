@@ -5,10 +5,12 @@ const { NotImplementedError, ensurePortImplementation } = require('../Port');
 // They translate the provider's statuses and errors into a ProviderResult; nothing
 // provider-specific may cross this boundary.
 //
-// ProviderResult: { status, providerReference, declineReason? }
+// ProviderResult: { status, providerReference, declineReason?, nextAction? }
 //   status: 'AUTHORIZED' | 'CAPTURED' | 'REFUNDED' | 'FAILED' | 'PENDING'
 //           (PENDING means the result arrives later by webhook)
 //   declineReason: only when status is FAILED
+//   nextAction: only when status is PENDING and the customer must act first
+//               (e.g. 3-D Secure): { type, clientSecret }
 //
 // Amounts are integers in minor units. The idempotencyKey is reused on every retry of
 // the same request. paymentMethodToken comes from the provider; never raw card data.
