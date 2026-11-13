@@ -47,6 +47,12 @@ const config = {
     audience: secrets.jwtAudience || process.env.JWT_AUDIENCE,
     secret: secrets.jwtSecret || process.env.JWT_SECRET,
   },
+  // Applies to /payments only (not /health or provider webhooks). Booking Service is the
+  // only caller, so all its traffic shares one client IP: keep max well above its peak.
+  rateLimit: {
+    windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
+    max: Number(process.env.RATE_LIMIT_MAX) || 1000,
+  },
 };
 
 const isTestEnv =
@@ -65,16 +71,20 @@ function validateConfig(cfg = config, { isTest = isTestEnv } = {}) {
     throw new Error('FATAL: STRIPE_SECRET_KEY is required when PAYMENT_PROVIDER=stripe.');
   }
 
-  if (!isTest) {
+  // Tokens are validated either against the Auth Service's JWKS (RS256/ES256) or, until
+  // it publishes one, with the shared HS256 JWT_SECRET (local, docker compose, CI).
+  if (!isTest && !cfg.jwt?.secret) {
     if (!cfg.jwt?.jwksUri || !cfg.jwt?.issuer || !cfg.jwt?.audience) {
       throw new Error(
-        'FATAL: JWKS_URI, JWT_ISSUER, and JWT_AUDIENCE are required to validate authentication tokens.',
+        'FATAL: JWKS_URI, JWT_ISSUER, and JWT_AUDIENCE are required to validate authentication tokens. ' +
+          'Set them, or JWT_SECRET to validate HS256 tokens.',
       );
     }
   }
 }
 
-validateConfig(config);
-
+// Called by the composition root (src/index.js) when the service starts, not on require:
+// knexfile.js, npm run openapi and npm run token load this module without the service's
+// secrets.
 config.validateConfig = validateConfig;
 module.exports = config;
