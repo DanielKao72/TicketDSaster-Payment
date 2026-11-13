@@ -3,8 +3,16 @@ const assert = require('node:assert');
 const { PaymentRepository } = require('../../src/ports/outbound/PaymentRepository');
 const { PaymentProvider } = require('../../src/ports/outbound/PaymentProvider');
 const { IdempotencyStore } = require('../../src/ports/outbound/IdempotencyStore');
+const { ProcessedEventStore } = require('../../src/ports/outbound/ProcessedEventStore');
+const { WebhookAdapter } = require('../../src/ports/outbound/WebhookAdapter');
 
-const PORTS = [PaymentRepository, PaymentProvider, IdempotencyStore];
+const PORTS = [
+  PaymentRepository,
+  PaymentProvider,
+  IdempotencyStore,
+  ProcessedEventStore,
+  WebhookAdapter,
+];
 
 test('ports are abstract and cannot be instantiated', () => {
   for (const Port of PORTS) {
@@ -22,7 +30,7 @@ test('an adapter missing port methods fails when it is created', () => {
   assert.throws(() => new IncompletePaymentRepository(), {
     name: 'TypeError',
     message:
-      'IncompletePaymentRepository must implement PaymentRepository: findById, findBySessionId',
+      'IncompletePaymentRepository must implement PaymentRepository: findById, findBySessionId, findByProviderReference',
   });
 });
 

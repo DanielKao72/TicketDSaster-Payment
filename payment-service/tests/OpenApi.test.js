@@ -23,6 +23,7 @@ test('OpenAPI spec documents the payment routes', () => {
   assert.ok(paths['/payments/{paymentId}'].get);
   assert.ok(paths['/payments/{paymentId}/capture'].post);
   assert.ok(paths['/payments/{paymentId}/refund'].post);
+  assert.ok(paths['/webhooks/payments'].post);
   assert.ok(components.securitySchemes.bearerAuth);
   assert.ok(components.schemas.Payment);
 });
