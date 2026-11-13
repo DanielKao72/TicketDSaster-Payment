@@ -35,7 +35,13 @@ function errorHandler(err, req, res, next) {
 
   if (status === 500) {
     // Log only the error itself: request bodies may carry payment details.
-    console.error(err);
+    // Extract only safe properties. Avoid printing the entire `err` object
+    // because third-party libraries might attach the original payload with tokens.
+    console.error({
+      message: err.message,
+      name: err.name,
+      stack: err.stack,
+    });
     res.status(500).json({ error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } });
     return;
   }

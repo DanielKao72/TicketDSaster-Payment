@@ -51,7 +51,11 @@ function describeConcurrency(name, { setup, teardown, activePaymentsOf }, option
     beforeEach(async () => {
       stores = await setup();
       provider = new CountingPaymentProvider();
-      const app = buildApp({ ...stores, paymentProvider: provider, jwtSecret: JWT_SECRET });
+      const app = buildApp({
+        ...stores,
+        paymentProvider: provider,
+        jwtConfig: { secret: JWT_SECRET },
+      });
       server = app.listen(0);
       baseUrl = `http://localhost:${server.address().port}`;
     });

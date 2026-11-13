@@ -1,4 +1,33 @@
 const { version } = require('../../../package.json');
+const { SecretsManager } = require('../secrets/SecretsManager');
+
+// Issue #159 / Report Ref: 4.3: Load secrets using the SecretsManager abstraction
+// Supports 'env' (local dev & tests), 'file' (Docker/K8s secrets volume), and 'cloud' (Secret Manager)
+const secrets = (() => {
+  try {
+    return (
+      SecretsManager.loadSync?.() || {
+        databaseUrl: process.env.DATABASE_URL,
+        stripeSecretKey: process.env.STRIPE_SECRET_KEY,
+        stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
+        jwksUri: process.env.JWKS_URI,
+        jwtIssuer: process.env.JWT_ISSUER,
+        jwtAudience: process.env.JWT_AUDIENCE,
+        jwtSecret: process.env.JWT_SECRET,
+      }
+    );
+  } catch {
+    return {
+      databaseUrl: process.env.DATABASE_URL,
+      stripeSecretKey: process.env.STRIPE_SECRET_KEY,
+      stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
+      jwksUri: process.env.JWKS_URI,
+      jwtIssuer: process.env.JWT_ISSUER,
+      jwtAudience: process.env.JWT_AUDIENCE,
+      jwtSecret: process.env.JWT_SECRET,
+    };
+  }
+})();
 
 // Deployment environment. It decides the database defaults and whether seeds may run
 // (never in production). The Docker image defaults to production.
@@ -62,7 +91,7 @@ function readInteger(name, defaultValue, { min = 0 } = {}) {
 function readDatabaseConfig() {
   const defaults = DATABASE_DEFAULTS[appEnv];
   const database = {
-    url: process.env.DATABASE_URL,
+    url: secrets.databaseUrl || process.env.DATABASE_URL,
     poolMin: readInteger('DB_POOL_MIN', defaults.poolMin),
     poolMax: readInteger('DB_POOL_MAX', defaults.poolMax, { min: 1 }),
     acquireTimeoutMs: readInteger('DB_ACQUIRE_TIMEOUT_MS', defaults.acquireTimeoutMs, { min: 1 }),
@@ -91,17 +120,57 @@ const config = {
   database: readDatabaseConfig(),
   // 'postgres' uses the Payment Store; 'memory' runs without a database (data is lost on restart).
   paymentStore: process.env.PAYMENT_STORE || 'memory',
-  jwt: {
-    // Shared HS256 secret with the Auth Service, which issues the tokens.
-    secret: process.env.JWT_SECRET,
-  },
-  paymentProvider: process.env.PAYMENT_PROVIDER || 'fake',
+  paymentProvider: (process.env.PAYMENT_PROVIDER || 'fake').toLowerCase(),
   stripe: {
-    secretKey: process.env.STRIPE_SECRET_KEY,
+    secretKey: secrets.stripeSecretKey || process.env.STRIPE_SECRET_KEY,
     // Endpoint signing secret (`whsec_...`) that verifies `Stripe-Signature` on
     // POST /webhooks/payments; without it every webhook is rejected.
-    webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
+    webhookSecret: secrets.stripeWebhookSecret || process.env.STRIPE_WEBHOOK_SECRET,
+  },
+  jwt: {
+    jwksUri: secrets.jwksUri || process.env.JWKS_URI,
+    issuer: secrets.jwtIssuer || process.env.JWT_ISSUER,
+    audience: secrets.jwtAudience || process.env.JWT_AUDIENCE,
+    secret: secrets.jwtSecret || process.env.JWT_SECRET,
+  },
+  // Applies to /payments only (not /health or provider webhooks). Booking Service is the
+  // only caller, so all its traffic shares one client IP: keep max well above its peak.
+  rateLimit: {
+    windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
+    max: Number(process.env.RATE_LIMIT_MAX) || 1000,
   },
 };
 
+const isTestEnv =
+  process.env.NODE_ENV === 'test' ||
+  process.env.npm_lifecycle_event === 'test' ||
+  process.argv.includes('--test') ||
+  Boolean(process.env.NODE_TEST_CONTEXT);
+
+// Fail fast: Validate critical environment variables at startup (Report ref: 5.4)
+function validateConfig(cfg = config, { isTest = isTestEnv } = {}) {
+  if (cfg.paymentStore === 'postgres' && !cfg.database?.url) {
+    throw new Error('FATAL: DATABASE_URL is required when PAYMENT_STORE=postgres.');
+  }
+
+  if (cfg.paymentProvider === 'stripe' && !cfg.stripe?.secretKey) {
+    throw new Error('FATAL: STRIPE_SECRET_KEY is required when PAYMENT_PROVIDER=stripe.');
+  }
+
+  // Tokens are validated either against the Auth Service's JWKS (RS256/ES256) or, until
+  // it publishes one, with the shared HS256 JWT_SECRET (local, docker compose, CI).
+  if (!isTest && !cfg.jwt?.secret) {
+    if (!cfg.jwt?.jwksUri || !cfg.jwt?.issuer || !cfg.jwt?.audience) {
+      throw new Error(
+        'FATAL: JWKS_URI, JWT_ISSUER, and JWT_AUDIENCE are required to validate authentication tokens. ' +
+          'Set them, or JWT_SECRET to validate HS256 tokens.',
+      );
+    }
+  }
+}
+
+// Called by the composition root (src/index.js) when the service starts, not on require:
+// knexfile.js, npm run openapi and npm run token load this module without the service's
+// secrets.
+config.validateConfig = validateConfig;
 module.exports = config;

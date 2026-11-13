@@ -1,4 +1,6 @@
 const express = require('express');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const healthRoutes = require('./routes/HealthRoutes');
 const { buildPaymentRoutes } = require('./routes/PaymentRoutes');
 const { buildWebhookRoutes } = require('./routes/WebhookRoutes');
@@ -19,13 +21,32 @@ function buildApp({
   paymentRepository,
   paymentProvider,
   idempotencyStore,
-  jwtSecret,
+  jwtConfig,
+  rateLimitOptions = {},
   processedEventStore,
   webhookAdapter,
 } = {}) {
   const app = express();
 
-  app.use(express.json({ verify: (req, res, buf) => (req.rawBody = buf) }));
+  app.use(helmet());
+
+  // Only the payment endpoints are rate limited: /health is polled by the orchestrator
+  // and provider webhooks must never be dropped. src/index.js passes config.rateLimit.
+  const limiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 1000,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: {
+      error: { code: 'RATE_LIMIT_EXCEEDED', message: 'Too many requests, please try again later.' },
+    },
+    ...rateLimitOptions,
+  });
+  app.use('/payments', limiter);
+
+  // rawBody keeps the exact bytes the provider signed, for webhook signature checks.
+  app.use(express.json({ limit: '100kb', verify: (req, res, buf) => (req.rawBody = buf) }));
+
   app.use(healthRoutes);
 
   if (paymentRepository) {
@@ -36,7 +57,8 @@ function buildApp({
       capturePayment: new CapturePaymentUseCase(ports),
       refundPayment: new RefundPaymentUseCase(ports),
     });
-    app.use(buildPaymentRoutes({ paymentController, idempotencyStore, jwtSecret }));
+    // Pass jwtConfig down to the routes
+    app.use(buildPaymentRoutes({ paymentController, idempotencyStore, jwtConfig }));
   }
 
   if (paymentRepository && processedEventStore && webhookAdapter) {

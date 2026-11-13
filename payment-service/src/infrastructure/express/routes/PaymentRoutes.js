@@ -98,9 +98,9 @@ const sessionQuery = z.object({ sessionId: z.string().uuid() });
  *         application/json:
  *           schema: { $ref: '#/components/schemas/Error' }
  */
-function buildPaymentRoutes({ paymentController, idempotencyStore, jwtSecret }) {
+function buildPaymentRoutes({ paymentController, idempotencyStore, jwtConfig }) {
   const router = Router();
-  const fanOnly = [jwtAuth(jwtSecret), requireRole('Fan')];
+  const fanOnly = [jwtAuth(jwtConfig), requireRole('Fan')];
   const once = idempotency(idempotencyStore);
 
   /**
