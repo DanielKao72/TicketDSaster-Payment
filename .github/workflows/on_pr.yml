@@ -23,7 +23,7 @@ jobs:
 
     steps:
       - name: "checkout code"
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: "Setup node js"
         uses: actions/setup-node@v5
@@ -74,7 +74,7 @@ jobs:
 
     steps:
       - name: "checkout code"
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: "Setup node js"
         uses: actions/setup-node@v5
@@ -117,7 +117,7 @@ jobs:
 
     steps:
       - name: "checkout code"
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: "Setup node js"
         uses: actions/setup-node@v5

@@ -25,7 +25,7 @@ jobs:
 
     steps:
       - name: "checkout code"
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0 # full history and tags: the changelog reads commits since the previous release
 
