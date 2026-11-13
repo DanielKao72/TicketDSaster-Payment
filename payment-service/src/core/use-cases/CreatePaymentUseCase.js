@@ -5,6 +5,9 @@ const { PaymentAlreadyExistsError, ProviderUnavailableError } = require('../doma
 
 // Creates the Payment of a Session and asks the provider to authorize it. A declined
 // authorization is not an error: the payment is persisted as FAILED.
+// Returns { payment, nextAction }: nextAction is only set while the customer still has
+// to act (e.g. 3-D Secure) and is never persisted.
+
 class CreatePaymentUseCase {
   #paymentRepository;
   #paymentProvider;
@@ -22,8 +25,6 @@ class CreatePaymentUseCase {
 
     const payment = Payment.create({ sessionId, userId, amount, currency });
 
-    // Nothing is persisted if the provider is unavailable, so the retry starts clean
-    // (and reuses the idempotencyKey, so the provider never charges twice).
     const result = await this.#paymentProvider.authorize({
       paymentId: payment.id,
       amount: payment.amount,
@@ -31,6 +32,8 @@ class CreatePaymentUseCase {
       paymentMethodToken,
       idempotencyKey,
     });
+
+    let nextAction = null;
 
     switch (result.status) {
       case PaymentStatus.AUTHORIZED:
@@ -44,12 +47,15 @@ class CreatePaymentUseCase {
         break;
       case PaymentStatus.PENDING:
         payment.awaitProviderResult(TransactionType.CHARGE, result.providerReference);
+        nextAction = result.nextAction ?? null;
         break;
       default:
         throw new ProviderUnavailableError(`Unexpected provider status: ${result.status}`);
     }
 
-    return this.#paymentRepository.save(payment);
+    const saved = await this.#paymentRepository.save(payment);
+    saved.nextAction = nextAction;
+    return saved;
   }
 }
 
