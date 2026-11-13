@@ -1,27 +1,21 @@
 const { test, before, after } = require('node:test');
 const assert = require('node:assert');
-const path = require('node:path');
 const { randomUUID } = require('node:crypto');
-const knex = require('knex');
 const {
   PostgresProcessedEventStore,
 } = require('../../../src/adapters/repositories/PostgresProcessedEventStore');
+const { skip, connect } = require('../../support/PostgresTestDatabase');
 
-// Integration tests against a real Postgres. They are skipped unless DATABASE_URL
-// points to a disposable test database.
-const DATABASE_URL = process.env.DATABASE_URL;
-const integration = {
-  skip: DATABASE_URL ? false : 'DATABASE_URL is not set (needs a test Postgres)',
-};
+// Integration tests against a real Postgres, skipped unless TEST_DATABASE_URL is set.
+const integration = { skip };
 
 let db;
 let store;
 
 before(async () => {
-  if (!DATABASE_URL) return;
+  if (skip) return;
 
-  db = knex({ client: 'pg', connection: DATABASE_URL, pool: { min: 0, max: 5 } });
-  await db.migrate.latest({ directory: path.join(__dirname, '../../../db/migrations') });
+  db = await connect({ pool: { min: 0, max: 5 } });
   store = new PostgresProcessedEventStore(db);
 });
 
