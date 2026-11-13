@@ -22,6 +22,12 @@ class PaymentRepository {
   async findBySessionId(sessionId) {
     throw new NotImplementedError('PaymentRepository.findBySessionId');
   }
+
+  // Resolves to the Payment that owns a Transaction with that provider reference
+  // (the one the provider sends back in its webhooks), or null.
+  async findByProviderReference(providerReference) {
+    throw new NotImplementedError('PaymentRepository.findByProviderReference');
+  }
 }
 
 module.exports = { PaymentRepository };

@@ -56,6 +56,19 @@ class PostgresPaymentRepository extends PaymentRepository {
     return this.#find(this.#knex, { session_id: sessionId });
   }
 
+  async findByProviderReference(providerReference) {
+    if (!providerReference) return null;
+
+    const transaction = await this.#knex('transactions')
+      .select('payment_id')
+      .where({ provider_reference: providerReference })
+      .orderBy('created_at', 'desc')
+      .first();
+    if (!transaction) return null;
+
+    return this.#find(this.#knex, { id: transaction.payment_id });
+  }
+
   async #find(db, where) {
     const row = await db('payments').where(where).orderBy('created_at', 'desc').first();
     if (!row) return null;

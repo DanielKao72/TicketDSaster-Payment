@@ -5,14 +5,23 @@ const { buildApp } = require('./infrastructure/express/App');
 const { createKnex } = require('./infrastructure/database/Knex');
 const { FakePaymentProvider } = require('./adapters/providers/FakePaymentProvider');
 const { RetryingPaymentProvider } = require('./adapters/providers/RetryingPaymentProvider');
+const { StripeWebhookAdapter } = require('./adapters/providers/StripeWebhookAdapter');
 const { StripePaymentProvider } = require('./adapters/providers/StripePaymentProvider');
 const {
   CircuitBreakerPaymentProvider,
 } = require('./adapters/providers/CircuitBreakerPaymentProvider');
 const { PostgresPaymentRepository } = require('./adapters/repositories/PostgresPaymentRepository');
 const { PostgresIdempotencyStore } = require('./adapters/repositories/PostgresIdempotencyStore');
+const {
+  PostgresProcessedEventStore,
+} = require('./adapters/repositories/PostgresProcessedEventStore');
 const { InMemoryPaymentRepository } = require('./adapters/repositories/InMemoryPaymentRepository');
 const { InMemoryIdempotencyStore } = require('./adapters/repositories/InMemoryIdempotencyStore');
+const {
+  InMemoryProcessedEventStore,
+} = require('./adapters/repositories/InMemoryProcessedEventStore');
+const { HttpBookingNotifier } = require('./adapters/notifiers/HttpBookingNotifier');
+const { NoopBookingNotifier } = require('./adapters/notifiers/NoopBookingNotifier');
 
 function buildStores() {
   if (config.paymentStore === 'postgres') {
@@ -20,12 +29,14 @@ function buildStores() {
     return {
       paymentRepository: new PostgresPaymentRepository(knex),
       idempotencyStore: new PostgresIdempotencyStore(knex),
+      processedEventStore: new PostgresProcessedEventStore(knex),
     };
   }
   if (config.paymentStore === 'memory') {
     return {
       paymentRepository: new InMemoryPaymentRepository(),
       idempotencyStore: new InMemoryIdempotencyStore(),
+      processedEventStore: new InMemoryProcessedEventStore(),
     };
   }
   throw new Error(`PAYMENT_STORE must be 'postgres' or 'memory', got '${config.paymentStore}'`);
@@ -52,13 +63,30 @@ function buildPaymentProvider() {
   throw new Error(`PAYMENT_PROVIDER must be 'fake' or 'stripe', got '${config.paymentProvider}'`);
 }
 
+function buildBookingNotifier() {
+  if (config.booking.notifyUrl) {
+    return new HttpBookingNotifier({
+      notifyUrl: config.booking.notifyUrl,
+      serviceToken: config.booking.serviceToken,
+      timeoutMs: config.booking.notifyTimeoutMs,
+    });
+  }
+  return new NoopBookingNotifier();
+}
+
 if (!config.jwt.secret) {
   throw new Error('JWT_SECRET is required to validate the tokens issued by the Auth Service');
 }
 
+const webhookAdapter = new StripeWebhookAdapter({
+  webhookSecret: config.webhook.secret,
+});
+
 const app = buildApp({
   ...buildStores(),
   paymentProvider: buildPaymentProvider(),
+  bookingNotifier: buildBookingNotifier(),
+  webhookAdapter,
   jwtSecret: config.jwt.secret,
 });
 

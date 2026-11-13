@@ -4,7 +4,7 @@ This file provides guidance to AI coding agents when working with code in this r
 
 ## Overview
 
-Payment Service for the Ticket D-Saster platform (Node.js 20 + Express, CommonJS, PostgreSQL via knex). The service code and its `package.json` live in `payment-service/`. Design docs are in `docs/`, release scripts in `scripts/`, and CI workflows in `.github/workflows/`. The payment endpoints (`/payments`, capture, refund) run against a mocked provider (`FakePaymentProvider`); the provider webhook is not implemented yet.
+Payment Service for the Ticket D-Saster platform (Node.js 20 + Express, CommonJS, PostgreSQL via knex). The service code and its `package.json` live in `payment-service/`. Design docs are in `docs/`, release scripts in `scripts/`, and CI workflows in `.github/workflows/`. The payment endpoints (`/payments`, capture, refund) run against a mocked provider (`FakePaymentProvider`). The provider webhook is implemented: `POST /webhooks/payments` verifies the Stripe signature over the raw body, deduplicates by event id and tolerates out-of-order events (only valid transitions are applied and terminal states never move). **Booking notification (PROVISIONAL):** when a payment reaches FAILED (via synchronous use cases or webhook), the service notifies Booking via `POST BOOKING_NOTIFY_URL/internal/payments/result`; the single source for the route, payload and notified statuses (`NOTIFY_STATUSES`) is `src/ports/outbound/BookingNotifierContract.js` and must be confirmed with the Booking team before going to production.
 
 ## Commands
 
