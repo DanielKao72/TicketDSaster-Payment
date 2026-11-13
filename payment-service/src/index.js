@@ -65,19 +65,16 @@ if (!config.jwt.secret) {
   throw new Error('JWT_SECRET is required to validate the tokens issued by the Auth Service');
 }
 
-// The external provider is still mocked; a real adapter would replace FakePaymentProvider here.
-const paymentProvider = new RetryingPaymentProvider({ provider: new FakePaymentProvider() });
+// Provider webhooks always come from Stripe, so this adapter is wired whatever
+// PAYMENT_PROVIDER is.
 const webhookAdapter = new StripeWebhookAdapter({
-  webhookSecret: config.webhook.secret,
+  webhookSecret: config.stripe.webhookSecret,
 });
 
 const app = buildApp({
   ...buildStores(),
-  paymentProvider,
-  webhookAdapter,
-const app = buildApp({
-  ...buildStores(),
   paymentProvider: buildPaymentProvider(),
+  webhookAdapter,
   jwtSecret: config.jwt.secret,
 });
 
