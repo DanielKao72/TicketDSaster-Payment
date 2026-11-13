@@ -1,19 +1,31 @@
 const express = require('express');
 const healthRoutes = require('./routes/HealthRoutes');
 const { buildPaymentRoutes } = require('./routes/PaymentRoutes');
+const { buildWebhookRoutes } = require('./routes/WebhookRoutes');
 const { errorHandler } = require('./middlewares/ErrorHandler');
 const { PaymentController } = require('../../adapters/controllers/PaymentController');
+const { WebhookController } = require('../../adapters/controllers/WebhookController');
 const { CreatePaymentUseCase } = require('../../core/use-cases/CreatePaymentUseCase');
 const { GetPaymentUseCase } = require('../../core/use-cases/GetPaymentUseCase');
 const { CapturePaymentUseCase } = require('../../core/use-cases/CapturePaymentUseCase');
 const { RefundPaymentUseCase } = require('../../core/use-cases/RefundPaymentUseCase');
+const {
+  HandleProviderWebhookUseCase,
+} = require('../../core/use-cases/HandleProviderWebhookUseCase');
 
 // The composition root (src/index.js) passes the adapters here. Without them (e.g. in
 // the health test) only /health is mounted.
-function buildApp({ paymentRepository, paymentProvider, idempotencyStore, jwtSecret } = {}) {
+function buildApp({
+  paymentRepository,
+  paymentProvider,
+  idempotencyStore,
+  jwtSecret,
+  processedEventStore,
+  webhookAdapter,
+} = {}) {
   const app = express();
 
-  app.use(express.json());
+  app.use(express.json({ verify: (req, res, buf) => (req.rawBody = buf) }));
   app.use(healthRoutes);
 
   if (paymentRepository) {
@@ -25,6 +37,16 @@ function buildApp({ paymentRepository, paymentProvider, idempotencyStore, jwtSec
       refundPayment: new RefundPaymentUseCase(ports),
     });
     app.use(buildPaymentRoutes({ paymentController, idempotencyStore, jwtSecret }));
+  }
+
+  if (paymentRepository && processedEventStore && webhookAdapter) {
+    const webhookController = new WebhookController({
+      handleProviderWebhook: new HandleProviderWebhookUseCase({
+        paymentRepository,
+        processedEventStore,
+      }),
+    });
+    app.use(buildWebhookRoutes({ webhookController, webhookAdapter }));
   }
 
   app.use(errorHandler);

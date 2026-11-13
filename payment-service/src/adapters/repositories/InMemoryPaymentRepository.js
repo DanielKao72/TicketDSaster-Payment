@@ -57,6 +57,15 @@ class InMemoryPaymentRepository extends PaymentRepository {
     const snapshot = [...this.#snapshots.values()].findLast((s) => s.sessionId === sessionId);
     return snapshot ? Payment.fromPersistence(snapshot) : null;
   }
+
+  async findByProviderReference(providerReference) {
+    if (!providerReference) return null;
+
+    const snapshot = [...this.#snapshots.values()].findLast((s) =>
+      s.transactions.some((transaction) => transaction.providerReference === providerReference),
+    );
+    return snapshot ? Payment.fromPersistence(snapshot) : null;
+  }
 }
 
 module.exports = { InMemoryPaymentRepository };

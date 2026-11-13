@@ -98,6 +98,8 @@ const config = {
   paymentProvider: process.env.PAYMENT_PROVIDER || 'fake',
   stripe: {
     secretKey: process.env.STRIPE_SECRET_KEY,
+    // Endpoint signing secret (`whsec_...`) that verifies `Stripe-Signature` on
+    // POST /webhooks/payments; without it every webhook is rejected.
     webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
   },
 };
