@@ -15,6 +15,10 @@ const config = {
   webhook: {
     // Stripe endpoint signing secret (`whsec_...`); without it every webhook is rejected.
     secret: process.env.PAYMENT_PROVIDER_WEBHOOK_SECRET,
+  paymentProvider: process.env.PAYMENT_PROVIDER || 'fake',
+  stripe: {
+    secretKey: process.env.STRIPE_SECRET_KEY,
+    webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
   },
 };
 
