@@ -1,6 +1,9 @@
 node_modules
 .env
 
+# newman report written by the postman CI job
+newman-report.xml
+
 # Generated OpenAPI definition (published by the release pipeline)
 openapi*.json
 

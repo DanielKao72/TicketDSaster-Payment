@@ -15,27 +15,43 @@ services:
       timeout: 5s
       retries: 10
 
-  # Runs the migrations and seeds the Payment Store with dummy data, then exits.
+  # Applies the migrations, then exits. Same step as the deployment pipeline
+  # (.github/workflows/migrate.yml): the service itself never migrates on startup.
   migrate:
     build: .
     env_file: .env
     environment:
+      APP_ENV: development
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
-    command: sh -c "npm run db:migrate && npm run db:seed"
+    command: npm run db:migrate
     depends_on:
       db:
         condition: service_healthy
+
+  # Local development only: loads the dummy data of db/seeds, then exits. Seeds refuse
+  # to run with APP_ENV=production, the image's default.
+  seed:
+    build: .
+    env_file: .env
+    environment:
+      APP_ENV: development
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+    command: npm run db:seed
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
 
   payment-service:
     build: .
     env_file: .env
     environment:
+      APP_ENV: development
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       PAYMENT_STORE: postgres
     ports:
       - '${PORT:-3000}:${PORT:-3000}'
     depends_on:
-      migrate:
+      seed:
         condition: service_completed_successfully
 
 volumes:

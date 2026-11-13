@@ -5,14 +5,21 @@ const { buildApp } = require('./infrastructure/express/App');
 const { createKnex } = require('./infrastructure/database/Knex');
 const { FakePaymentProvider } = require('./adapters/providers/FakePaymentProvider');
 const { RetryingPaymentProvider } = require('./adapters/providers/RetryingPaymentProvider');
+const { StripeWebhookAdapter } = require('./adapters/providers/StripeWebhookAdapter');
 const { StripePaymentProvider } = require('./adapters/providers/StripePaymentProvider');
 const {
   CircuitBreakerPaymentProvider,
 } = require('./adapters/providers/CircuitBreakerPaymentProvider');
 const { PostgresPaymentRepository } = require('./adapters/repositories/PostgresPaymentRepository');
 const { PostgresIdempotencyStore } = require('./adapters/repositories/PostgresIdempotencyStore');
+const {
+  PostgresProcessedEventStore,
+} = require('./adapters/repositories/PostgresProcessedEventStore');
 const { InMemoryPaymentRepository } = require('./adapters/repositories/InMemoryPaymentRepository');
 const { InMemoryIdempotencyStore } = require('./adapters/repositories/InMemoryIdempotencyStore');
+const {
+  InMemoryProcessedEventStore,
+} = require('./adapters/repositories/InMemoryProcessedEventStore');
 
 function buildStores() {
   if (config.paymentStore === 'postgres') {
@@ -20,12 +27,14 @@ function buildStores() {
     return {
       paymentRepository: new PostgresPaymentRepository(knex),
       idempotencyStore: new PostgresIdempotencyStore(knex),
+      processedEventStore: new PostgresProcessedEventStore(knex),
     };
   }
   if (config.paymentStore === 'memory') {
     return {
       paymentRepository: new InMemoryPaymentRepository(),
       idempotencyStore: new InMemoryIdempotencyStore(),
+      processedEventStore: new InMemoryProcessedEventStore(),
     };
   }
   throw new Error(`PAYMENT_STORE must be 'postgres' or 'memory', got '${config.paymentStore}'`);
@@ -55,9 +64,16 @@ function buildPaymentProvider() {
 // Fail fast: refuse to start without the settings the service needs (JWT, store, provider).
 config.validateConfig();
 
+// Provider webhooks always come from Stripe, so this adapter is wired whatever
+// PAYMENT_PROVIDER is.
+const webhookAdapter = new StripeWebhookAdapter({
+  webhookSecret: config.stripe.webhookSecret,
+});
+
 const app = buildApp({
   ...buildStores(),
   paymentProvider: buildPaymentProvider(),
+  webhookAdapter,
   jwtConfig: config.jwt,
   rateLimitOptions: config.rateLimit,
 });

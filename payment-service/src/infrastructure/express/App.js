@@ -3,12 +3,17 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const healthRoutes = require('./routes/HealthRoutes');
 const { buildPaymentRoutes } = require('./routes/PaymentRoutes');
+const { buildWebhookRoutes } = require('./routes/WebhookRoutes');
 const { errorHandler } = require('./middlewares/ErrorHandler');
 const { PaymentController } = require('../../adapters/controllers/PaymentController');
+const { WebhookController } = require('../../adapters/controllers/WebhookController');
 const { CreatePaymentUseCase } = require('../../core/use-cases/CreatePaymentUseCase');
 const { GetPaymentUseCase } = require('../../core/use-cases/GetPaymentUseCase');
 const { CapturePaymentUseCase } = require('../../core/use-cases/CapturePaymentUseCase');
 const { RefundPaymentUseCase } = require('../../core/use-cases/RefundPaymentUseCase');
+const {
+  HandleProviderWebhookUseCase,
+} = require('../../core/use-cases/HandleProviderWebhookUseCase');
 
 // The composition root (src/index.js) passes the adapters here. Without them (e.g. in
 // the health test) only /health is mounted.
@@ -18,6 +23,8 @@ function buildApp({
   idempotencyStore,
   jwtConfig,
   rateLimitOptions = {},
+  processedEventStore,
+  webhookAdapter,
 } = {}) {
   const app = express();
 
@@ -37,7 +44,8 @@ function buildApp({
   });
   app.use('/payments', limiter);
 
-  app.use(express.json({ limit: '100kb' }));
+  // rawBody keeps the exact bytes the provider signed, for webhook signature checks.
+  app.use(express.json({ limit: '100kb', verify: (req, res, buf) => (req.rawBody = buf) }));
 
   app.use(healthRoutes);
 
@@ -51,6 +59,16 @@ function buildApp({
     });
     // Pass jwtConfig down to the routes
     app.use(buildPaymentRoutes({ paymentController, idempotencyStore, jwtConfig }));
+  }
+
+  if (paymentRepository && processedEventStore && webhookAdapter) {
+    const webhookController = new WebhookController({
+      handleProviderWebhook: new HandleProviderWebhookUseCase({
+        paymentRepository,
+        processedEventStore,
+      }),
+    });
+    app.use(buildWebhookRoutes({ webhookController, webhookAdapter }));
   }
 
   app.use(errorHandler);

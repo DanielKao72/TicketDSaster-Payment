@@ -1,5 +1,10 @@
 const { Payment } = require('../../core/domain/Payment');
+const { PaymentAlreadyExistsError } = require('../../core/domain/DomainErrors');
 const { PaymentRepository } = require('../../ports/outbound/PaymentRepository');
+
+// Unique partial index: one active (not FAILED) payment per Session.
+const ONE_ACTIVE_PER_SESSION = 'payments_one_active_per_session';
+const UNIQUE_VIOLATION = '23505';
 
 // knex implementation over the `payments` and `transactions` tables.
 class PostgresPaymentRepository extends PaymentRepository {
@@ -11,6 +16,25 @@ class PostgresPaymentRepository extends PaymentRepository {
   }
 
   async save(payment) {
+    try {
+      return await this.#save(payment);
+    } catch (err) {
+      if (err.code === UNIQUE_VIOLATION && err.constraint === ONE_ACTIVE_PER_SESSION) {
+        throw new PaymentAlreadyExistsError(payment.sessionId);
+      }
+      throw err;
+    }
+  }
+
+  async discardPending(payment) {
+    const deleted = await this.#knex('payments')
+      .where({ id: payment.id, status: 'PENDING' })
+      .whereNotExists(this.#knex('transactions').where('payment_id', payment.id))
+      .del();
+    return deleted > 0;
+  }
+
+  async #save(payment) {
     const snapshot = payment.toSnapshot();
 
     return this.#knex.transaction(async (trx) => {
@@ -54,6 +78,19 @@ class PostgresPaymentRepository extends PaymentRepository {
 
   async findBySessionId(sessionId) {
     return this.#find(this.#knex, { session_id: sessionId });
+  }
+
+  async findByProviderReference(providerReference) {
+    if (!providerReference) return null;
+
+    const transaction = await this.#knex('transactions')
+      .select('payment_id')
+      .where({ provider_reference: providerReference })
+      .orderBy('created_at', 'desc')
+      .first();
+    if (!transaction) return null;
+
+    return this.#find(this.#knex, { id: transaction.payment_id });
   }
 
   async #find(db, where) {

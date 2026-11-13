@@ -4,7 +4,7 @@ This file provides guidance to AI coding agents when working with code in this r
 
 ## Overview
 
-Payment Service for the Ticket D-Saster platform (Node.js 20 + Express, CommonJS, PostgreSQL via knex). The service code and its `package.json` live in `payment-service/`. Design docs are in `docs/`, release scripts in `scripts/`, and CI workflows in `.github/workflows/`. The payment endpoints (`/payments`, capture, refund) run against a mocked provider (`FakePaymentProvider`); the provider webhook is not implemented yet.
+Payment Service for the Ticket D-Saster platform (Node.js 20 + Express, CommonJS, PostgreSQL via knex). The service code and its `package.json` live in `payment-service/`. Design docs are in `docs/`, release scripts in `scripts/`, and CI workflows in `.github/workflows/`. The payment endpoints (`/payments`, capture, refund) run against a mocked provider (`FakePaymentProvider`). The provider webhook is implemented: `POST /webhooks/payments` verifies the Stripe signature over the raw body, deduplicates by event id and tolerates out-of-order events (only valid transitions are applied and terminal states never move).
 
 ## Commands
 
@@ -21,7 +21,7 @@ node --test --test-name-pattern="health"   # tests matching a name
 npm run openapi                            # writes openapi.json (APP_VERSION overrides info.version)
 npm run token -- --sub <uuid> --role Fan   # signs a dev JWT with JWT_SECRET
 npm run db:migrate | db:rollback | db:seed # knex, needs DATABASE_URL
-docker compose up --build                  # Postgres + migrations/seeds + service (cp .env.example .env first)
+docker compose up --build                  # Postgres, then migrate, then seed (dev only), then the service (cp .env.example .env first)
 ```
 
 From the repo root, `scripts/changelog.sh HEAD` previews the next release notes and `scripts/bump.sh --dry-run` shows the next version.
@@ -34,7 +34,7 @@ From the repo root, `scripts/changelog.sh HEAD` previews the next release notes 
 - `core/use-cases/`: one class per use case (`CreatePaymentUseCase.js` → `CreatePaymentUseCase` with `execute()`). Ports are injected through the constructor.
 - `ports/outbound/`: abstract classes named after the port, one per port: `PaymentRepository`, `PaymentProvider`, `IdempotencyStore`. Adapters `extend` them. The port's constructor calls `ensurePortImplementation` (`ports/Port.js`), which rejects instantiating the port itself and throws if the adapter does not override every method. An incomplete adapter therefore fails when it is created, not mid-payment.
 - `adapters/`: `controllers/` (HTTP → use case), `repositories/` (knex implementations of the ports) and `providers/` (the payment provider ACL).
-- `infrastructure/`: `config/`, `database/` (knex instance), and `express/` (`App.js`, `OpenApi.js`, `routes/`, `middlewares/`).
+- `infrastructure/`: `config/`, `database/` (knex instance and its pool/timeout options, also used by `knexfile.js` for migrations), and `express/` (`App.js`, `OpenApi.js`, `routes/`, `middlewares/`).
 
 Rules:
 
@@ -42,9 +42,9 @@ Rules:
 - **Entrypoint:** `src/index.js` is the composition root. It is the only file that creates adapters, injects them into `buildApp(deps)` (`infrastructure/express/App.js`) and calls `listen()`.
 - **Tests:** they call `buildApp().listen(0)` on an ephemeral port and hit it with global `fetch`. Use-case tests inject fakes instead of mocking modules (`FakePaymentProvider` in `adapters/providers/FakePaymentProvider.js` is the provider fake).
 - **Naming:** files use UpperCamelCase and are named after what they export (`Payment.js`, `PaymentRepository.js`, `HealthController.js`, `HealthRoutes.js`). Tests keep the `.test.js` suffix (`Payment.test.js`). The exceptions are `index.js`, tool config files (`eslint.config.js`, `knexfile.js`) and knex migrations and seeds. Folders stay kebab-case (`use-cases/`). The port and its adapters are told apart by folder (`ports/outbound/PaymentRepository.js` vs `adapters/repositories/PostgresPaymentRepository.js`).
-- **Config:** all env access goes through `src/infrastructure/config/index.js` (`port`, `appVersion`, `database.url`, `paymentStore`, `jwt.secret`). Don't read `process.env` anywhere else.
+- **Config:** all env access goes through `src/infrastructure/config/index.js` (`appEnv`, `port`, `appVersion`, `database` (url, pool and timeouts per `APP_ENV`, overridable with `DB_*`), `paymentStore`, `jwt.secret`). Don't read `process.env` anywhere else.
 - **OpenAPI is generated from code.** Every route needs an `@openapi` JSDoc block in `src/infrastructure/express/routes/*.js`, which `src/infrastructure/express/OpenApi.js` (swagger-jsdoc) collects. `tests/OpenApi.test.js` checks the spec.
-- **Payment Store schema** is in `db/migrations/` (`payments`, `transactions`, `idempotency_keys`, with native Postgres enums for statuses). `db/seeds/` holds dummy data with one payment per status. Change the schema with a new migration; never edit an applied one.
+- **Payment Store schema** is in `db/migrations/` (`payments`, `transactions`, `idempotency_keys`, `payment_audit_log`, with native Postgres enums for statuses). `db/seeds/` holds dummy data with one payment per status. Change the schema with a new migration; never edit an applied one. Migrations run as their own pipeline step (`.github/workflows/migrate.yml`, the `migrations` CI job), never on service startup. Seeds call `db/SeedGuard.js` and refuse to run with `APP_ENV=production` (the Docker image's default). `payment_audit_log` records every payment change and transaction through triggers; `transactions` are append-only, a payment's amount/currency/session/user never change, and deletes on payments, transactions and the audit log fail unless the transaction sets `payment_store.allow_delete = on` (only the dev seeds do). See `docs/operations/database.md`.
 
 ### Domain context (see `docs/ddd/domain-model.md`, `docs/architecture/c4-model.md`)
 
@@ -55,6 +55,7 @@ Rules:
 ### Conventions for payment features
 
 - **Money**: integer minor units (cents) plus an ISO 4217 `currency`. Never floats.
+- **One active payment per Session**: `CreatePaymentUseCase` reserves the Session by saving the payment as PENDING before calling the provider; the repository enforces one non-FAILED payment per Session atomically (Postgres unique partial index `payments_one_active_per_session`) and throws `PaymentAlreadyExistsError`. If the provider fails, `discardPending` releases the reservation. `tests/infrastructure/express/routes/PaymentConcurrency.test.js` proves it under concurrent requests with different keys.
 - **Status transitions** (`PENDING → AUTHORIZED → CAPTURED`, plus `FAILED`, `REFUNDED`) live only in the `Payment` aggregate (`core/domain/Payment.js`, rules in `PaymentStatus.js`). It throws `InvalidPaymentTransitionError` on an invalid transition, and the error handler maps that to 409.
 - **Idempotency**: every POST that creates a payment or refund requires an `Idempotency-Key` header (`infrastructure/express/middlewares/Idempotency.js`, persisted in `idempotency_keys` through the `IdempotencyStore` port). Provider retries reuse the same key, with timeouts and backoff.
 - **Auth**: the service validates JWTs and never issues them (`infrastructure/express/middlewares/JwtAuth.js`; payload `{ sub, role: Fan|Organizer|VenueOwner, iat, exp }`). Role checks go through `middlewares/RequireRole.js`, never inline in controllers.
@@ -62,7 +63,7 @@ Rules:
 - Never store or log card data (PAN, CVV, expiry), because card capture is delegated to the provider.
 - Use async/await throughout, with a centralized error-handling middleware (`infrastructure/express/middlewares/ErrorHandler.js`, which maps `DomainError` subclasses to status codes). Validate input (joi or zod) before the use-case layer.
 - **Status codes**: 201 create, 200 query, 202 accepted but provider result pending, 400, 401, 403, 404, 409 duplicate or idempotency-key payload mismatch, 422 provider declined, 502 provider failure or timeout.
-- **Tests** mirror `src/` under `tests/` (`tests/core/domain/Payment.test.js`). Domain tests need no fakes. Use-case tests inject fake ports (repository, provider, idempotency store). Route integration tests use a test or in-memory store. Explicitly cover idempotency (no double charge) and invalid transitions.
+- **Tests** mirror `src/` under `tests/` (`tests/core/domain/Payment.test.js`). Domain tests need no fakes. Use-case tests inject fake ports (repository, provider, idempotency store). Route integration tests use a test or in-memory store. Tests that need a real Postgres use `tests/support/PostgresTestDatabase.js` and run only with `TEST_DATABASE_URL` (CI sets it in the `migrations` job). Explicitly cover idempotency (no double charge) and invalid transitions.
 
 ## Repository workflow
 
