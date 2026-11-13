@@ -23,9 +23,11 @@ function buildApp({
 
   app.use(helmet());
 
+  // Only the payment endpoints are rate limited: /health is polled by the orchestrator
+  // and provider webhooks must never be dropped. src/index.js passes config.rateLimit.
   const limiter = rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: 100,
+    max: 1000,
     standardHeaders: true,
     legacyHeaders: false,
     message: {
@@ -33,7 +35,7 @@ function buildApp({
     },
     ...rateLimitOptions,
   });
-  app.use(limiter);
+  app.use('/payments', limiter);
 
   app.use(express.json({ limit: '100kb' }));
 

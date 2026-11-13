@@ -86,6 +86,30 @@ test('validateConfig: in non-test mode, throws when JWT JWKS configuration is in
   );
 });
 
+test('validateConfig: in non-test mode, JWT_SECRET is enough to validate HS256 tokens', () => {
+  const cfg = {
+    paymentStore: 'memory',
+    paymentProvider: 'fake',
+    database: { url: undefined },
+    stripe: { secretKey: undefined },
+    jwt: { secret: 'shared-hs256-secret' },
+  };
+
+  assert.doesNotThrow(() => validateConfig(cfg, { isTest: false }));
+});
+
+test('validateConfig: in non-test mode, throws without JWT_SECRET nor JWKS configuration', () => {
+  const cfg = {
+    paymentStore: 'memory',
+    paymentProvider: 'fake',
+    database: { url: undefined },
+    stripe: { secretKey: undefined },
+    jwt: {},
+  };
+
+  assert.throws(() => validateConfig(cfg, { isTest: false }), /or JWT_SECRET/);
+});
+
 test('validateConfig: in non-test mode, succeeds when JWKS_URI, JWT_ISSUER and JWT_AUDIENCE are provided', () => {
   const cfg = {
     paymentStore: 'memory',

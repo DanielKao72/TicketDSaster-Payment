@@ -26,23 +26,32 @@ test('helmet: includes security headers in responses', async () => {
   }
 });
 
-test('rate limiter: returns 429 when max requests are exceeded', async () => {
-  const server = buildApp({
+function buildRateLimitedApp() {
+  return buildApp({
+    paymentRepository: new InMemoryPaymentRepository(),
+    paymentProvider: new FakePaymentProvider(),
+    idempotencyStore: new InMemoryIdempotencyStore(),
+    jwtConfig: { secret: 'test-secret' },
     rateLimitOptions: {
       max: 2,
       windowMs: 60 * 1000,
     },
-  }).listen(0);
+  });
+}
+
+test('rate limiter: returns 429 on /payments when max requests are exceeded', async () => {
+  const server = buildRateLimitedApp().listen(0);
   const baseUrl = `http://localhost:${server.address().port}`;
+  const url = `${baseUrl}/payments/00000000-0000-4000-8000-000000000000`;
 
   try {
-    const res1 = await fetch(`${baseUrl}/health`);
-    assert.strictEqual(res1.status, 200);
+    const res1 = await fetch(url);
+    assert.strictEqual(res1.status, 401);
 
-    const res2 = await fetch(`${baseUrl}/health`);
-    assert.strictEqual(res2.status, 200);
+    const res2 = await fetch(url);
+    assert.strictEqual(res2.status, 401);
 
-    const res3 = await fetch(`${baseUrl}/health`);
+    const res3 = await fetch(url);
     assert.strictEqual(res3.status, 429);
 
     const body = await res3.json();
@@ -52,6 +61,20 @@ test('rate limiter: returns 429 when max requests are exceeded', async () => {
         message: 'Too many requests, please try again later.',
       },
     });
+  } finally {
+    server.close();
+  }
+});
+
+test('rate limiter: does not limit /health', async () => {
+  const server = buildRateLimitedApp().listen(0);
+  const baseUrl = `http://localhost:${server.address().port}`;
+
+  try {
+    for (let i = 0; i < 4; i += 1) {
+      const response = await fetch(`${baseUrl}/health`);
+      assert.strictEqual(response.status, 200);
+    }
   } finally {
     server.close();
   }

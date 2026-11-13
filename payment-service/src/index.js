@@ -52,14 +52,14 @@ function buildPaymentProvider() {
   throw new Error(`PAYMENT_PROVIDER must be 'fake' or 'stripe', got '${config.paymentProvider}'`);
 }
 
-if (!config.jwt.secret) {
-  throw new Error('JWT_SECRET is required to validate the tokens issued by the Auth Service');
-}
+// Fail fast: refuse to start without the settings the service needs (JWT, store, provider).
+config.validateConfig();
 
 const app = buildApp({
   ...buildStores(),
   paymentProvider: buildPaymentProvider(),
-  jwtSecret: config.jwt.secret,
+  jwtConfig: config.jwt,
+  rateLimitOptions: config.rateLimit,
 });
 
 app.listen(config.port, () => {
