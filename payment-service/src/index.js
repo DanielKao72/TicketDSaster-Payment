@@ -20,6 +20,8 @@ const { InMemoryIdempotencyStore } = require('./adapters/repositories/InMemoryId
 const {
   InMemoryProcessedEventStore,
 } = require('./adapters/repositories/InMemoryProcessedEventStore');
+const { HttpBookingNotifier } = require('./adapters/notifiers/HttpBookingNotifier');
+const { NoopBookingNotifier } = require('./adapters/notifiers/NoopBookingNotifier');
 
 function buildStores() {
   if (config.paymentStore === 'postgres') {
@@ -61,23 +63,30 @@ function buildPaymentProvider() {
   throw new Error(`PAYMENT_PROVIDER must be 'fake' or 'stripe', got '${config.paymentProvider}'`);
 }
 
+function buildBookingNotifier() {
+  if (config.booking.notifyUrl) {
+    return new HttpBookingNotifier({
+      notifyUrl: config.booking.notifyUrl,
+      serviceToken: config.booking.serviceToken,
+      timeoutMs: config.booking.notifyTimeoutMs,
+    });
+  }
+  return new NoopBookingNotifier();
+}
+
 if (!config.jwt.secret) {
   throw new Error('JWT_SECRET is required to validate the tokens issued by the Auth Service');
 }
 
-// The external provider is still mocked; a real adapter would replace FakePaymentProvider here.
-const paymentProvider = new RetryingPaymentProvider({ provider: new FakePaymentProvider() });
 const webhookAdapter = new StripeWebhookAdapter({
   webhookSecret: config.webhook.secret,
 });
 
 const app = buildApp({
   ...buildStores(),
-  paymentProvider,
-  webhookAdapter,
-const app = buildApp({
-  ...buildStores(),
   paymentProvider: buildPaymentProvider(),
+  bookingNotifier: buildBookingNotifier(),
+  webhookAdapter,
   jwtSecret: config.jwt.secret,
 });
 

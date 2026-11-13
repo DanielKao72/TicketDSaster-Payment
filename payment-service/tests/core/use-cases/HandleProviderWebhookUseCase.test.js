@@ -10,14 +10,16 @@ const {
 const {
   InMemoryProcessedEventStore,
 } = require('../../../src/adapters/repositories/InMemoryProcessedEventStore');
-const { PAYMENT_REQUEST } = require('./Fixtures');
+const { PAYMENT_REQUEST, FakeBookingNotifier } = require('./Fixtures');
 
 async function pendingPayment(providerReference = 'ch_pending_1') {
   const paymentRepository = new InMemoryPaymentRepository();
   const processedEventStore = new InMemoryProcessedEventStore();
+  const bookingNotifier = new FakeBookingNotifier();
   const createPayment = new CreatePaymentUseCase({
     paymentRepository,
     paymentProvider: { authorize: async () => ({ status: 'PENDING', providerReference }) },
+    bookingNotifier,
   });
   const payment = await createPayment.execute(PAYMENT_REQUEST);
 
@@ -25,7 +27,11 @@ async function pendingPayment(providerReference = 'ch_pending_1') {
     payment,
     paymentRepository,
     processedEventStore,
-    webhook: new HandleProviderWebhookUseCase({ paymentRepository, processedEventStore }),
+    webhook: new HandleProviderWebhookUseCase({
+      paymentRepository,
+      processedEventStore,
+      bookingNotifier,
+    }),
     providerReference,
   };
 }

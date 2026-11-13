@@ -2,6 +2,7 @@ const { Payment } = require('../domain/Payment');
 const { PaymentStatus } = require('../domain/PaymentStatus');
 const { TransactionType } = require('../domain/Transaction');
 const { PaymentAlreadyExistsError, ProviderUnavailableError } = require('../domain/DomainErrors');
+const { notifyBookingSafely } = require('./NotifyBookingSafely');
 
 // Creates the Payment of a Session and asks the provider to authorize it. A declined
 // authorization is not an error: the payment is persisted as FAILED.
@@ -11,10 +12,12 @@ const { PaymentAlreadyExistsError, ProviderUnavailableError } = require('../doma
 class CreatePaymentUseCase {
   #paymentRepository;
   #paymentProvider;
+  #bookingNotifier;
 
-  constructor({ paymentRepository, paymentProvider }) {
+  constructor({ paymentRepository, paymentProvider, bookingNotifier }) {
     this.#paymentRepository = paymentRepository;
     this.#paymentProvider = paymentProvider;
+    this.#bookingNotifier = bookingNotifier;
   }
 
   async execute({ userId, sessionId, amount, currency, paymentMethodToken, idempotencyKey }) {
@@ -55,6 +58,11 @@ class CreatePaymentUseCase {
 
     const saved = await this.#paymentRepository.save(payment);
     saved.nextAction = nextAction;
+
+    // Notify Booking before returning (e.g. FAILED so it can count declined attempts).
+    // A notification failure is logged only: it must never change this response.
+    await notifyBookingSafely(this.#bookingNotifier, saved, 'CreatePaymentUseCase');
+
     return saved;
   }
 }

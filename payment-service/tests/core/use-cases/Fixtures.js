@@ -4,6 +4,7 @@ const {
 } = require('../../../src/adapters/repositories/InMemoryPaymentRepository');
 const { FakePaymentProvider } = require('../../../src/adapters/providers/FakePaymentProvider');
 const { PaymentProvider } = require('../../../src/ports/outbound/PaymentProvider');
+const { BookingNotifier } = require('../../../src/ports/outbound/BookingNotifier');
 const { CreatePaymentUseCase } = require('../../../src/core/use-cases/CreatePaymentUseCase');
 
 const USER_ID = '00000000-0000-4000-8000-000000000001';
@@ -51,11 +52,42 @@ class CountingProvider extends PaymentProvider {
   }
 }
 
-function setup(overrides) {
-  const paymentRepository = new InMemoryPaymentRepository();
-  const paymentProvider = new CountingProvider(overrides);
-  const createPayment = new CreatePaymentUseCase({ paymentRepository, paymentProvider });
-  return { paymentRepository, paymentProvider, createPayment };
+/**
+ * FakeBookingNotifier — records every call for assertion in tests.
+ * Extends the port so ensurePortImplementation is satisfied.
+ */
+class FakeBookingNotifier extends BookingNotifier {
+  calls = [];
+  #shouldThrow;
+
+  constructor({ shouldThrow = false } = {}) {
+    super();
+    this.#shouldThrow = shouldThrow;
+  }
+
+  async notifyPaymentResult(payment) {
+    this.calls.push({ status: payment.status, paymentId: payment.id });
+    if (this.#shouldThrow) throw new Error('simulated notifier failure');
+  }
 }
 
-module.exports = { USER_ID, OTHER_USER_ID, PAYMENT_REQUEST, setup };
+function setup(overrides, { bookingNotifier } = {}) {
+  const paymentRepository = new InMemoryPaymentRepository();
+  const paymentProvider = new CountingProvider(overrides);
+  const notifier = bookingNotifier ?? new FakeBookingNotifier();
+  const createPayment = new CreatePaymentUseCase({
+    paymentRepository,
+    paymentProvider,
+    bookingNotifier: notifier,
+  });
+  return { paymentRepository, paymentProvider, createPayment, bookingNotifier: notifier };
+}
+
+module.exports = {
+  USER_ID,
+  OTHER_USER_ID,
+  PAYMENT_REQUEST,
+  setup,
+  FakeBookingNotifier,
+  CountingProvider,
+};

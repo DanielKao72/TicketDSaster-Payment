@@ -5,6 +5,7 @@ const { buildWebhookRoutes } = require('./routes/WebhookRoutes');
 const { errorHandler } = require('./middlewares/ErrorHandler');
 const { PaymentController } = require('../../adapters/controllers/PaymentController');
 const { WebhookController } = require('../../adapters/controllers/WebhookController');
+const { NoopBookingNotifier } = require('../../adapters/notifiers/NoopBookingNotifier');
 const { CreatePaymentUseCase } = require('../../core/use-cases/CreatePaymentUseCase');
 const { GetPaymentUseCase } = require('../../core/use-cases/GetPaymentUseCase');
 const { CapturePaymentUseCase } = require('../../core/use-cases/CapturePaymentUseCase');
@@ -22,6 +23,8 @@ function buildApp({
   jwtSecret,
   processedEventStore,
   webhookAdapter,
+  // bookingNotifier defaults to Noop so existing tests that don't pass it still work.
+  bookingNotifier = new NoopBookingNotifier(),
 } = {}) {
   const app = express();
 
@@ -29,7 +32,7 @@ function buildApp({
   app.use(healthRoutes);
 
   if (paymentRepository) {
-    const ports = { paymentRepository, paymentProvider };
+    const ports = { paymentRepository, paymentProvider, bookingNotifier };
     const paymentController = new PaymentController({
       createPayment: new CreatePaymentUseCase(ports),
       getPayment: new GetPaymentUseCase(ports),
@@ -44,6 +47,7 @@ function buildApp({
       handleProviderWebhook: new HandleProviderWebhookUseCase({
         paymentRepository,
         processedEventStore,
+        bookingNotifier,
       }),
     });
     app.use(buildWebhookRoutes({ webhookController, webhookAdapter }));
