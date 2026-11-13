@@ -83,7 +83,7 @@ replay the original response.
 ## 5. Webhooks rejected (400)
 
 - `INVALID_WEBHOOK_SIGNATURE`: the endpoint secret does not match
-  `PAYMENT_PROVIDER_WEBHOOK_SECRET`, or the request sat longer than 5 minutes. Compare
+  `STRIPE_WEBHOOK_SECRET`, or the request sat longer than 5 minutes. Compare
   the signing secret in **Developers → Webhooks** with the deployment's env var, then
   resend the event from the dashboard.
 - `INVALID_WEBHOOK_PAYLOAD`: the body is not a Stripe event. Check that no proxy is
