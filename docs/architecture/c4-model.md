@@ -30,6 +30,7 @@ In the container diagram, the Payment Service sits within the **Auth & Payments 
 | Source | Via | Description |
 |---|---|---|
 | `Booking Service` | HTTP (+ propagated JWT) | Leverage Payment: starts the charge for a ticket purchase |
+| `External Payment Service` (Stripe) | HTTP webhook, `Stripe-Signature` over the raw body | Reports asynchronous results (`payment_intent.*`, `charge.refunded`) that resolve PENDING payments |
 
 > Frontends (`D-Saster Front`, `Backstage`) do **not** call the Payment Service directly. The purchase flow is orchestrated by the `Booking Service`, which delegates the charge to this service.
 
@@ -38,9 +39,37 @@ In the container diagram, the Payment Service sits within the **Auth & Payments 
 | Destination | Via | Description |
 |---|---|---|
 | `External Payment Service` | HTTP | Generate Payment Request to the external provider |
-| `Payment Store` | Read/Write | Stores payments, transactions, their status and idempotency keys |
+| `Payment Store` | Read/Write | Stores payments, transactions, their status, idempotency keys and the provider events already processed |
 
-> **Note:** the `Payment Store` is not yet drawn in the container diagram. It is part of this service's design, since every payment must be persisted for traceability, idempotency and auditing.
+> **Note:** the container diagram picture above predates the Payment Store and the
+> webhook flow. The text version below is the current container view; use it when the
+> picture and this section disagree.
+
+```mermaid
+flowchart LR
+  Booking["Booking Service"]
+  Payment["Payment Service"]
+  Store[("Payment Store<br/>payments · transactions<br/>idempotency_keys<br/>processed_provider_events")]
+  Stripe["Stripe<br/>(external payment provider)"]
+
+  Booking -->|"HTTPS + JWT<br/>POST /payments · /capture · /refund"| Payment
+  Payment -->|"authorize · capture · refund<br/>timeouts + retries, same idempotency key"| Stripe
+  Payment -->|"read / write"| Store
+  Stripe -->|"webhook POST /webhooks/payments<br/>Stripe-Signature over the raw body"| Payment
+```
+
+### Webhook flow
+
+1. Stripe sends `POST /webhooks/payments` with the raw body and a `Stripe-Signature`
+   header. There is no JWT: the signature is the authentication, and it is verified
+   before any status change.
+2. The event id is recorded in `processed_provider_events`; a retried delivery is
+   acknowledged with `200` and ignored.
+3. The payment is resolved by `transactions.provider_reference`. The event is translated
+   to a domain status (`AUTHORIZED`, `CAPTURED`, `FAILED` or `REFUNDED`) and only a valid
+   transition is applied. Terminal states (`FAILED`, `REFUNDED`) never move, so an
+   out-of-order event cannot roll a payment back.
+4. The new status and its transaction are persisted together in the `Payment Store`.
 
 ### Token consumption
 

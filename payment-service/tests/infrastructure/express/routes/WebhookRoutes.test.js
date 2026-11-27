@@ -66,7 +66,7 @@ beforeEach(async () => {
     idempotencyStore: new InMemoryIdempotencyStore(),
     processedEventStore: new InMemoryProcessedEventStore(),
     webhookAdapter: new StripeWebhookAdapter({ webhookSecret: WEBHOOK_SECRET }),
-    jwtSecret: 'test-secret',
+    jwtConfig: { secret: 'test-secret' },
   });
   server = app.listen(0);
   baseUrl = `http://localhost:${server.address().port}`;

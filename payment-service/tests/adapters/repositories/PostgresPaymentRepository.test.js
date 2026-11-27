@@ -1,29 +1,32 @@
 const { test, before, after } = require('node:test');
 const assert = require('node:assert');
-const path = require('node:path');
 const { randomUUID } = require('node:crypto');
-const knex = require('knex');
 const {
   PostgresPaymentRepository,
 } = require('../../../src/adapters/repositories/PostgresPaymentRepository');
+const { skip, connect } = require('../../support/PostgresTestDatabase');
 
-// Integration tests against a real Postgres. They are skipped unless DATABASE_URL
-// points to a disposable test database.
-const DATABASE_URL = process.env.DATABASE_URL;
-const integration = {
-  skip: DATABASE_URL ? false : 'DATABASE_URL is not set (needs a test Postgres)',
-};
+// Integration tests against a real Postgres, skipped unless TEST_DATABASE_URL is set.
+const integration = { skip };
 
 let db;
 let repository;
 
 before(async () => {
-  if (!DATABASE_URL) return;
+  if (skip) return;
 
-  db = knex({ client: 'pg', connection: DATABASE_URL, pool: { min: 0, max: 5 } });
-  await db.migrate.latest({ directory: path.join(__dirname, '../../../db/migrations') });
+  db = await connect({ pool: { min: 0, max: 5 } });
   repository = new PostgresPaymentRepository(db);
 });
+
+// Payments and transactions can only be deleted through the retention guard (6.3).
+async function deletePayment(paymentId) {
+  await db.transaction(async (trx) => {
+    await trx.raw("SELECT set_config('payment_store.allow_delete', 'on', true)");
+    await trx('transactions').where({ payment_id: paymentId }).del();
+    await trx('payments').where({ id: paymentId }).del();
+  });
+}
 
 after(async () => {
   if (db) await db.destroy();
@@ -59,7 +62,7 @@ test(
       assert.strictEqual(payment.id, paymentId);
       assert.strictEqual(payment.chargeReference, providerReference);
     } finally {
-      await db('payments').where({ id: paymentId }).del();
+      await deletePayment(paymentId);
     }
   },
 );

@@ -11,6 +11,9 @@ WORKDIR /app
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 COPY --from=builder /app /app
 USER appuser
+# Production unless told otherwise: seeds refuse to run and the production database
+# defaults apply. docker-compose sets APP_ENV=development for local work.
+ENV APP_ENV=production
 ENV PORT=3000
 EXPOSE 3000
 HEALTHCHECK CMD wget --spider -q http://localhost:3000/health || exit 1

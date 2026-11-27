@@ -14,6 +14,8 @@ jobs:
   # TODO: add the docker-image job (build and push to the registry over Tailscale) once the
   # TS_OAUTH_CLIENT_ID, TS_OAUTH_AUDIENCE, REGISTRY_USER and REGISTRY_PASS secrets exist,
   # and make github-release depend on it (needs: docker-image).
+  # The deploy job that follows must run the migrations first, with
+  # `uses: ./.github/workflows/migrate.yml` (seeds never run there), and only then roll out.
   # Reference: https://github.com/CarlosHPlata/sample-api/blob/main/.github/workflows/release.yml
 
   github-release:

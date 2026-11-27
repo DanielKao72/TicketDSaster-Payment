@@ -1,0 +1,82 @@
+name: Migrate Payment Store
+
+# Applies the pending migrations of a ref to one environment's Payment Store. The
+# service never migrates on startup and seeds never run here: this workflow is the
+# migration step of the deployment pipeline.
+#
+# - Manually: Actions > Migrate Payment Store > Run workflow (pick the tag and environment).
+# - From the deploy job, once it exists (release.yml TODO), before rolling out the image:
+#     migrate:
+#       uses: ./.github/workflows/migrate.yml
+#       with: { environment: prod }
+#       secrets: inherit
+#
+# Requirements (not set up yet, see docs/operations/database.md):
+# - GitHub Environments `dev` and `prod`, each with a DATABASE_URL secret for a role that
+#   may run DDL, and required reviewers on `prod`.
+# - Network access from the runner to the database (e.g. over Tailscale, like the registry).
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options: [dev, prod]
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+# Never two migrations against the same database at once (knex also takes a lock).
+concurrency:
+  group: migrate-${{ inputs.environment }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    working-directory: payment-service
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+
+    steps:
+      - name: "check the environment is configured"
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::The '${{ inputs.environment }}' environment has no DATABASE_URL secret"
+            exit 1
+          fi
+
+      - name: "checkout code"
+        uses: actions/checkout@v5
+
+      - name: "Setup node js"
+        uses: actions/setup-node@v5
+        with:
+          node-version-file: payment-service/.nvmrc
+          cache: npm
+          cache-dependency-path: payment-service/package-lock.json
+
+      - name: "install dependencies"
+        run: npm ci --omit=dev
+
+      - name: "pending migrations"
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          APP_ENV: production
+        run: npx knex migrate:list
+
+      - name: "apply migrations"
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          APP_ENV: production
+        run: npm run db:migrate

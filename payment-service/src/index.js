@@ -74,12 +74,13 @@ function buildBookingNotifier() {
   return new NoopBookingNotifier();
 }
 
-if (!config.jwt.secret) {
-  throw new Error('JWT_SECRET is required to validate the tokens issued by the Auth Service');
-}
+// Fail fast: refuse to start without the settings the service needs (JWT, store, provider).
+config.validateConfig();
 
+// Provider webhooks always come from Stripe, so this adapter is wired whatever
+// PAYMENT_PROVIDER is.
 const webhookAdapter = new StripeWebhookAdapter({
-  webhookSecret: config.webhook.secret,
+  webhookSecret: config.stripe.webhookSecret,
 });
 
 const app = buildApp({
@@ -87,7 +88,8 @@ const app = buildApp({
   paymentProvider: buildPaymentProvider(),
   bookingNotifier: buildBookingNotifier(),
   webhookAdapter,
-  jwtSecret: config.jwt.secret,
+  jwtConfig: config.jwt,
+  rateLimitOptions: config.rateLimit,
 });
 
 app.listen(config.port, () => {

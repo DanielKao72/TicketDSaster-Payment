@@ -1,8 +1,9 @@
 const config = require('./src/infrastructure/config');
+const { buildMigrationKnexConfig } = require('./src/infrastructure/database/Knex');
 
+// Used by the knex CLI (npm run db:migrate | db:rollback | db:seed).
 module.exports = {
-  client: 'pg',
-  connection: config.database.url,
+  ...buildMigrationKnexConfig(config),
   migrations: {
     directory: './db/migrations',
   },
