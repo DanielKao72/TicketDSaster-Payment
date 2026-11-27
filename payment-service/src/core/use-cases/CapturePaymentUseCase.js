@@ -5,15 +5,18 @@ const {
   ProviderUnavailableError,
 } = require('../domain/DomainErrors');
 const { loadOwnedPayment } = require('./LoadOwnedPayment');
+const { notifyBookingSafely } = require('./NotifyBookingSafely');
 
 // Captures an AUTHORIZED payment (Booking calls it once the seats are confirmed).
 class CapturePaymentUseCase {
   #paymentRepository;
   #paymentProvider;
+  #bookingNotifier;
 
-  constructor({ paymentRepository, paymentProvider }) {
+  constructor({ paymentRepository, paymentProvider, bookingNotifier }) {
     this.#paymentRepository = paymentRepository;
     this.#paymentProvider = paymentProvider;
+    this.#bookingNotifier = bookingNotifier;
   }
 
   async execute({ userId, paymentId, idempotencyKey }) {
@@ -46,7 +49,13 @@ class CapturePaymentUseCase {
         throw new ProviderUnavailableError(`Unexpected provider status: ${result.status}`);
     }
 
-    return this.#paymentRepository.save(payment);
+    const saved = await this.#paymentRepository.save(payment);
+
+    // Notify Booking before returning (e.g. FAILED so it can count declined attempts).
+    // A notification failure is logged only: it must never change this response.
+    await notifyBookingSafely(this.#bookingNotifier, saved, 'CapturePaymentUseCase');
+
+    return saved;
   }
 }
 

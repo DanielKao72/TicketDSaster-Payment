@@ -139,6 +139,12 @@ const config = {
     windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
     max: Number(process.env.RATE_LIMIT_MAX) || 1000,
   },
+  // PROVISIONAL: pendiente de confirmar con Booking (reunión 7 nov: notificamos FAILED).
+  booking: {
+    notifyUrl: process.env.BOOKING_NOTIFY_URL || null,
+    serviceToken: process.env.BOOKING_SERVICE_TOKEN || null,
+    notifyTimeoutMs: Number(process.env.BOOKING_NOTIFY_TIMEOUT_MS) || 3000,
+  },
 };
 
 const isTestEnv =

@@ -20,6 +20,8 @@ const { InMemoryIdempotencyStore } = require('./adapters/repositories/InMemoryId
 const {
   InMemoryProcessedEventStore,
 } = require('./adapters/repositories/InMemoryProcessedEventStore');
+const { HttpBookingNotifier } = require('./adapters/notifiers/HttpBookingNotifier');
+const { NoopBookingNotifier } = require('./adapters/notifiers/NoopBookingNotifier');
 
 function buildStores() {
   if (config.paymentStore === 'postgres') {
@@ -61,6 +63,17 @@ function buildPaymentProvider() {
   throw new Error(`PAYMENT_PROVIDER must be 'fake' or 'stripe', got '${config.paymentProvider}'`);
 }
 
+function buildBookingNotifier() {
+  if (config.booking.notifyUrl) {
+    return new HttpBookingNotifier({
+      notifyUrl: config.booking.notifyUrl,
+      serviceToken: config.booking.serviceToken,
+      timeoutMs: config.booking.notifyTimeoutMs,
+    });
+  }
+  return new NoopBookingNotifier();
+}
+
 // Fail fast: refuse to start without the settings the service needs (JWT, store, provider).
 config.validateConfig();
 
@@ -73,6 +86,7 @@ const webhookAdapter = new StripeWebhookAdapter({
 const app = buildApp({
   ...buildStores(),
   paymentProvider: buildPaymentProvider(),
+  bookingNotifier: buildBookingNotifier(),
   webhookAdapter,
   jwtConfig: config.jwt,
   rateLimitOptions: config.rateLimit,
