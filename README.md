@@ -88,4 +88,4 @@ scripts/changelog.sh HEAD                # vista previa de las notas del release
 | Minor (`v1.5.0`) | solo dev |
 | Patch (`v1.4.3`) | no se despliega; solo se publica |
 
-Al subir el tag, `.github/workflows/release.yml` crea el release en GitHub con las notas generadas a partir de los commits y adjunta el `openapi.json` versionado. Un tag publicado no se mueve ni se reutiliza: si algo sale mal, se publica una versión nueva.
+Al subir el tag, `.github/workflows/release.yml` construye la imagen y la sube al registry del tailnet como `ninjava-payment-service` (tags `M.m.p`, `M.m`, `M` y `latest` en versiones estables; necesita los secrets `TS_OAUTH_CLIENT_ID`, `TS_OAUTH_AUDIENCE`, `REGISTRY_USER` y `REGISTRY_PASS`). Después crea el release en GitHub con las notas generadas a partir de los commits y adjunta el `openapi.json` versionado. Un tag publicado no se mueve ni se reutiliza: si algo sale mal, se publica una versión nueva.
